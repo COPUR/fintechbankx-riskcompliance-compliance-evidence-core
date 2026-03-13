@@ -1,0 +1,7 @@
+bounded_context: "compliance"
+service_id: "svc-cmp-evidence"
+application_id: "app.cmp.evidence"
+data_owner_pattern: "db_cmp_evidence_prod"
+event_namespace: "evt.cmp.compliance"
+owning_squad: "Risk and Compliance Decisioning Squad"
+wave: "4"
