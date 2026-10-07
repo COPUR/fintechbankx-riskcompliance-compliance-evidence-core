@@ -1,1 +1,5 @@
 rootProject.name = 'fintechbankx-compliance-evidence-service'
+
+include 'compliance-domain'
+include 'compliance-application'
+include 'compliance-infrastructure'

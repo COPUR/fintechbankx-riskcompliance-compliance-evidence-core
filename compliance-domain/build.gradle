@@ -3,7 +3,6 @@ apply plugin: 'jacoco'
 description = 'Compliance Domain - AML and sanctions screening logic'
 
 dependencies {
-    api project(':shared-kernel')
 
     testImplementation libs.junit.jupiter
     testImplementation libs.assertj.core

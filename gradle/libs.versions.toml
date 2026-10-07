@@ -1,0 +1,32 @@
+# Minimal version catalog for the standalone compliance-evidence build.
+# Versions taken from the enterprise-loan-management-system catalog at extraction time.
+
+[versions]
+spring-boot = "3.3.6"
+postgresql = "42.7.10"
+h2 = "2.4.240"
+flyway = "10.4.1"
+junit = "5.10.5"
+mockito = "5.22.0"
+assertj = "3.27.7"
+testcontainers = "1.19.3"
+archunit = "1.4.1"
+springdoc-openapi = "2.3.0"
+
+[libraries]
+spring-boot-starter-web = { group = "org.springframework.boot", name = "spring-boot-starter-web", version.ref = "spring-boot" }
+spring-boot-starter-data-jpa = { group = "org.springframework.boot", name = "spring-boot-starter-data-jpa", version.ref = "spring-boot" }
+spring-boot-starter-validation = { group = "org.springframework.boot", name = "spring-boot-starter-validation", version.ref = "spring-boot" }
+spring-boot-starter-test = { group = "org.springframework.boot", name = "spring-boot-starter-test", version.ref = "spring-boot" }
+postgresql-driver = { group = "org.postgresql", name = "postgresql", version.ref = "postgresql" }
+h2-database = { group = "com.h2database", name = "h2", version.ref = "h2" }
+flyway-core = { group = "org.flywaydb", name = "flyway-core", version.ref = "flyway" }
+flyway-database-postgresql = { group = "org.flywaydb", name = "flyway-database-postgresql", version.ref = "flyway" }
+junit-jupiter = { group = "org.junit.jupiter", name = "junit-jupiter", version.ref = "junit" }
+mockito-core = { group = "org.mockito", name = "mockito-core", version.ref = "mockito" }
+mockito-junit-jupiter = { group = "org.mockito", name = "mockito-junit-jupiter", version.ref = "mockito" }
+assertj-core = { group = "org.assertj", name = "assertj-core", version.ref = "assertj" }
+testcontainers-junit-jupiter = { group = "org.testcontainers", name = "junit-jupiter", version.ref = "testcontainers" }
+testcontainers-postgresql = { group = "org.testcontainers", name = "postgresql", version.ref = "testcontainers" }
+archunit-junit5 = { group = "com.tngtech.archunit", name = "archunit-junit5", version.ref = "archunit" }
+springdoc-openapi-starter-webmvc-ui = { group = "org.springdoc", name = "springdoc-openapi-starter-webmvc-ui", version.ref = "springdoc-openapi" }

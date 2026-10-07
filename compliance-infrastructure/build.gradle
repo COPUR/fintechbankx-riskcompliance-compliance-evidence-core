@@ -3,10 +3,8 @@ apply plugin: 'jacoco'
 description = 'Compliance Infrastructure - Web and persistence adapters for compliance context'
 
 dependencies {
-    implementation project(':compliance-context:compliance-domain')
-    implementation project(':compliance-context:compliance-application')
-    implementation project(':shared-kernel')
-    implementation project(':shared-infrastructure')
+    implementation project(':compliance-domain')
+    implementation project(':compliance-application')
 
     implementation libs.spring.boot.starter.data.jpa
     implementation libs.spring.boot.starter.web
