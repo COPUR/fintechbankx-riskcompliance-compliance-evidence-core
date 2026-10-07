@@ -1,0 +1,43 @@
+// =================================================================
+// COMPLIANCE BOOTSTRAP MODULE
+// =================================================================
+// Runnable Spring Boot service (svc-cmp-evidence). Wires the domain,
+// application and infrastructure modules; holds runtime configuration only.
+// =================================================================
+
+apply plugin: 'org.springframework.boot'
+
+description = 'Compliance Bootstrap - deployable svc-cmp-evidence service'
+
+dependencies {
+    implementation project(':compliance-infrastructure')
+    implementation project(':compliance-application')
+    implementation project(':compliance-domain')
+
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+    implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
+    runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
+    runtimeOnly 'org.postgresql:postgresql'
+    runtimeOnly 'org.flywaydb:flyway-database-postgresql'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.security:spring-security-test'
+    testImplementation 'org.testcontainers:junit-jupiter'
+    testImplementation 'org.testcontainers:postgresql'
+}
+
+springBoot {
+    mainClass = 'com.bank.compliance.ComplianceEvidenceApplication'
+    buildInfo()
+}
+
+bootJar {
+    archiveFileName = 'compliance-evidence-service.jar'
+}
+
+jar {
+    enabled = false
+}

@@ -10,6 +10,9 @@ paths:
     post:
       summary: Run compliance screening
       operationId: screenCompliance
+      description: |-
+        Screens once per transactionId. A retry for the same customer returns
+        the stored result; the same transactionId for another customer is a 409.
       security:
         - bearerAuth: []
           dpopAuth: []
@@ -30,6 +33,30 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ComplianceScreeningResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Transaction already screened for another customer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /api/v1/compliance/screenings/{transactionId}:
     get:
       summary: Find compliance result by transaction id
@@ -49,8 +76,24 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ComplianceScreeningResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '404':
-          description: Not found
+          description: No screening result for this transaction
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
 components:
   securitySchemes:
@@ -123,5 +166,18 @@ components:
           items:
             type: string
         checkedAt:
+          type: string
+          format: date-time
+    ErrorResponse:
+      type: object
+      required: [code, message, interactionId, timestamp]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        interactionId:
+          type: string
+        timestamp:
           type: string
           format: date-time

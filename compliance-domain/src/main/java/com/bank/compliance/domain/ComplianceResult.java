@@ -1,6 +1,7 @@
 package com.bank.compliance.domain;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Objects;
 
@@ -46,8 +47,34 @@ public final class ComplianceResult {
                 customerId,
                 decision,
                 reasons,
-                Instant.now()
+                // Microseconds: the precision the evidence is stored with, so a retry
+                // returns exactly the timestamp the first response carried.
+                Instant.now().truncatedTo(ChronoUnit.MICROS)
         );
+    }
+
+    /**
+     * Rebuilds a stored screening result. The decision is kept as it was made,
+     * even if the rules have changed since: it is evidence.
+     */
+    public static ComplianceResult rehydrate(ComplianceResultSnapshot snapshot) {
+        Objects.requireNonNull(snapshot, "snapshot is required");
+        return new ComplianceResult(
+                snapshot.id(),
+                snapshot.transactionId(),
+                snapshot.customerId(),
+                snapshot.decision(),
+                snapshot.reasons(),
+                snapshot.checkedAt()
+        );
+    }
+
+    /**
+     * True when a repeated screening request for this transaction is for the
+     * same customer, so the stored result can be returned for it.
+     */
+    public boolean isFor(String otherCustomerId) {
+        return customerId.equals(otherCustomerId);
     }
 
     public ComplianceResultId getId() {

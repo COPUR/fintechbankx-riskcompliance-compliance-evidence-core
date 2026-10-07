@@ -43,6 +43,21 @@ Bu repository, FinTechBankX DDD/EDA dönüşümünde **svc-cmp-evidence** servis
 - Feature branch kuralı: `codex/<kisa-aciklama>`.
 - Release yaklaşımı: PR + required status checks + tag tabanlı sürümleme.
 
+## Run, test and deploy
+
+| What | Command / path |
+|---|---|
+| Unit and integration tests | `./gradlew test` (integration tests need `TEST_DB_URL` or Docker) |
+| Run locally | `SPRING_DATASOURCE_PASSWORD=... ./gradlew :compliance-bootstrap:bootRun` |
+| Database migrations | `compliance-infrastructure/src/main/resources/db/migration` (schema `sc_cmp_evidence`) |
+| Container image | `docker build -t compliance-evidence-service .` |
+| Kubernetes | `deploy/helm/compliance-evidence-service` |
+| AWS infrastructure | `deploy/terraform` |
+| Data split from the monolith | [RUNBOOK-EXTRACT-cmp-evidence](docs/migration/RUNBOOK-EXTRACT-cmp-evidence.md) |
+| Deployment and Well-Architected mapping | [DEPLOYMENT_AND_WELL_ARCHITECTED](docs/architecture/DEPLOYMENT_AND_WELL_ARCHITECTED.md) |
+
+Module layout: `compliance-domain` (screening result, rules, ports) ← `compliance-application` (use case) ← `compliance-infrastructure` (JPA, web, security) ← `compliance-bootstrap` (Spring Boot app).
+
 ## Dokümantasyon ve Referanslar
 - [Enterprise Architecture Hub](https://github.com/COPUR/fintechbankx-governance-architecture-enablement-enterprise-architecture)
 - [Secure Microservices Architecture](https://github.com/COPUR/fintechbankx-governance-architecture-enablement-enterprise-architecture/blob/main/docs/architecture/overview/SECURE_MICROSERVICES_ARCHITECTURE.md)

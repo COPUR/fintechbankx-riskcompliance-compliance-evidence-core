@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -66,5 +67,17 @@ class ComplianceScreeningServiceTest {
 
         assertThat(service.findByTransactionId("TX-3")).isEmpty();
         verify(repository).findByTransactionId("TX-3");
+    }
+
+    @Test
+    void shouldRefuseAReusedTransactionIdForAnotherCustomer() {
+        ComplianceScreeningCommand command = new ComplianceScreeningCommand("TX-9", "C2", new BigDecimal("100"), false, true, false);
+        ComplianceResult existing = ComplianceResult.create("TX-9", "C1", ComplianceDecision.PASS, List.of("COMPLIANT"));
+        when(repository.findByTransactionId("TX-9")).thenReturn(Optional.of(existing));
+
+        assertThatThrownBy(() -> service.screen(command))
+                .isInstanceOf(TransactionAlreadyScreenedException.class)
+                .hasMessageContaining("TX-9");
+        verify(repository, never()).save(any());
     }
 }

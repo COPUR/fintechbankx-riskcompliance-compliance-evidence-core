@@ -16,4 +16,4 @@
 - This is an extraction seed for bounded-context split migration.
 - Follow-up refactoring may be needed to remove residual cross-context coupling.
 - Build artifacts and local machine files are excluded by policy.
-
+- 2026-10-07: seed turned into a runnable service. The service owns `sc_cmp_evidence` with its own Flyway migrations; the monolith's `compliance_reports` rows move with `db/backfill/run-backfill.sh` (see `docs/migration/RUNBOOK-EXTRACT-cmp-evidence.md`).
