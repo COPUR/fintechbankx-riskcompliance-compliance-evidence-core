@@ -42,8 +42,10 @@ class OutboxRelayTest {
     private final KafkaTemplate<String, String> kafka = mock(KafkaTemplate.class);
     private final TransactionTemplate transactions = inlineTransactions();
     private static final int MAX_ATTEMPTS = 10;
+    private static final Duration PARK_AFTER = Duration.ofHours(24);
+    private final MutableClock clock = new MutableClock(NOW);
     private final OutboxRelay relay = new OutboxRelay(outbox, kafka, transactions,
-        Clock.fixed(NOW, ZoneOffset.UTC), 50, Duration.ofSeconds(1), Duration.ofDays(7), MAX_ATTEMPTS);
+        clock, 50, Duration.ofSeconds(1), Duration.ofDays(7), MAX_ATTEMPTS, PARK_AFTER);
 
     @Test
     void anotherReplicaHoldingTheLockMeansNothingIsSent() {
@@ -143,12 +145,48 @@ class OutboxRelayTest {
         assertThat(next.getPublishedAt()).isEqualTo(NOW);
     }
 
+    /**
+     * A broker or egress outage is retriable however long it lasts: the head
+     * row keeps the batch stopped and is never parked by a count of attempts.
+     */
     @Test
-    void aRowThatReachesTheAttemptCapIsParkedAndTheNextRowIsPublished() {
-        OutboxEventJpaEntity stuck = row("CMP-1");
-        for (int attempt = 1; attempt < MAX_ATTEMPTS; attempt++) {
-            stuck.markFailed("NotEnoughReplicasException");
+    void twentyRetriableFailuresInARowDoNotParkTheRow() {
+        OutboxEventJpaEntity head = row("CMP-1");
+        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(head, row("CMP-2")));
+        when(kafka.send(any(ProducerRecord.class)))
+            .thenAnswer(call -> CompletableFuture.failedFuture(new NotEnoughReplicasException("broker unavailable")));
+
+        for (int tick = 0; tick < 20; tick++) {
+            assertThat(relay.relayOnce()).isZero();
+            clock.advance(Duration.ofMinutes(1));
         }
+
+        assertThat(head.getAttempts()).isEqualTo(20).isGreaterThan(MAX_ATTEMPTS);
+        assertThat(head.getParkedAt()).isNull();
+        assertThat(head.getFirstFailedAt()).isEqualTo(NOW);
+        verify(kafka, times(20)).send(any(ProducerRecord.class));
+    }
+
+    @Test
+    void aRetriableFailureAtTheCeilingIsStillRetried() {
+        OutboxEventJpaEntity head = row("CMP-1");
+        head.markFailed("NotEnoughReplicasException", NOW.minus(PARK_AFTER));
+        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(head, row("CMP-2")));
+        when(kafka.send(any(ProducerRecord.class)))
+            .thenReturn(CompletableFuture.failedFuture(new NotEnoughReplicasException("broker unavailable")));
+
+        assertThat(relay.relayOnce()).isZero();
+
+        assertThat(head.getParkedAt()).isNull();
+        assertThat(head.getFirstFailedAt()).as("measured from the first failure").isEqualTo(NOW.minus(PARK_AFTER));
+    }
+
+    @Test
+    void aRetriableFailurePastTheCeilingParksTheRowAndTheNextRowIsPublished() {
+        OutboxEventJpaEntity stuck = row("CMP-1");
+        stuck.markFailed("NotEnoughReplicasException", NOW.minus(PARK_AFTER).minusSeconds(1));
         OutboxEventJpaEntity next = row("CMP-2");
         when(outbox.tryRelayLock(anyLong())).thenReturn(true);
         when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(stuck, next));
@@ -158,26 +196,23 @@ class OutboxRelayTest {
 
         assertThat(relay.relayOnce()).isEqualTo(1);
 
-        assertThat(stuck.getAttempts()).isEqualTo(MAX_ATTEMPTS);
         assertThat(stuck.getParkedAt()).isEqualTo(NOW);
         assertThat(next.getPublishedAt()).isEqualTo(NOW);
     }
 
     @Test
-    void aRowBelowTheAttemptCapIsNotParked() {
-        OutboxEventJpaEntity row = row("CMP-1");
-        for (int attempt = 1; attempt < MAX_ATTEMPTS - 1; attempt++) {
-            row.markFailed("NotEnoughReplicasException");
-        }
+    void aNonRetriableFailureParksAtOnceOnTheFirstAttempt() {
+        OutboxEventJpaEntity invalid = row("CMP-1");
         when(outbox.tryRelayLock(anyLong())).thenReturn(true);
-        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(row, row("CMP-2")));
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(invalid));
         when(kafka.send(any(ProducerRecord.class)))
-            .thenReturn(CompletableFuture.failedFuture(new NotEnoughReplicasException("still out of sync")));
+            .thenReturn(CompletableFuture.failedFuture(new org.apache.kafka.common.errors.InvalidTopicException("bad topic")));
 
-        assertThat(relay.relayOnce()).isZero();
+        relay.relayOnce();
 
-        assertThat(row.getAttempts()).isEqualTo(MAX_ATTEMPTS - 1);
-        assertThat(row.getParkedAt()).isNull();
+        assertThat(invalid.getAttempts()).isEqualTo(1);
+        assertThat(invalid.getFirstFailedAt()).isEqualTo(NOW);
+        assertThat(invalid.getParkedAt()).isEqualTo(NOW);
     }
 
     @Test
@@ -265,6 +300,34 @@ class OutboxRelayTest {
     private static OutboxEventJpaEntity row(String aggregateId, String traceparent) {
         return new OutboxEventJpaEntity(UUID.randomUUID(), "ComplianceScreening", aggregateId, 0L,
             "Compliance.ComplianceScreening.Screened.v1", "evt.cmp.compliance.screened.v1", "{}", "corr-9", traceparent, NOW);
+    }
+
+    /** A clock the test moves forward. */
+    static final class MutableClock extends Clock {
+        private Instant now;
+
+        MutableClock(Instant now) {
+            this.now = now;
+        }
+
+        void advance(Duration by) {
+            now = now.plus(by);
+        }
+
+        @Override
+        public java.time.ZoneId getZone() {
+            return ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(java.time.ZoneId zone) {
+            return this;
+        }
+
+        @Override
+        public Instant instant() {
+            return now;
+        }
     }
 
     private static TransactionTemplate inlineTransactions() {

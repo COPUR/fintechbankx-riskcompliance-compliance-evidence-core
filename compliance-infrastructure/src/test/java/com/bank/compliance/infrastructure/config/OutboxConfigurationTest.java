@@ -46,6 +46,20 @@ class OutboxConfigurationTest {
     }
 
     @Test
+    void oldestPendingAgeIsSecondsSinceTheOldestUnsentRowWasWritten() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        java.time.Instant now = java.time.Instant.parse("2026-10-08T12:00:00Z");
+        when(outbox.findOldestPendingCreatedAt()).thenReturn(java.util.Optional.of(now.minusSeconds(90)));
+
+        configuration.outboxOldestPendingAgeGauge(registry, outbox, Clock.fixed(now, java.time.ZoneOffset.UTC));
+
+        Gauge gauge = registry.get("outbox.oldest.pending.age.seconds").tag("service", "svc-cmp-evidence").gauge();
+        assertThat(gauge.value()).isEqualTo(90.0);
+        when(outbox.findOldestPendingCreatedAt()).thenReturn(java.util.Optional.empty());
+        assertThat(gauge.value()).as("nothing pending").isZero();
+    }
+
+    @Test
     void providesTheEnvelopeFactoryAndAUtcClock() {
         assertThat(configuration.complianceEventEnvelopeFactory(new ObjectMapper())).isNotNull();
         assertThat(configuration.clock().getZone()).isEqualTo(Clock.systemUTC().getZone());
@@ -56,7 +70,7 @@ class OutboxConfigurationTest {
     void scheduleRelaysAndPurgesThroughTheRelay() {
         OutboxConfiguration.RelayConfiguration relayConfiguration = new OutboxConfiguration.RelayConfiguration();
         OutboxRelay relay = relayConfiguration.outboxRelay(outbox, mock(KafkaTemplate.class),
-            mock(PlatformTransactionManager.class), Clock.systemUTC(), 10, Duration.ofSeconds(1), Duration.ofDays(7), 10);
+            mock(PlatformTransactionManager.class), Clock.systemUTC(), 10, Duration.ofSeconds(1), Duration.ofDays(7), 10, Duration.ofHours(24));
         OutboxRelay spyRelay = org.mockito.Mockito.spy(relay);
         org.mockito.Mockito.doReturn(0).when(spyRelay).relayOnce();
         org.mockito.Mockito.doReturn(2).when(spyRelay).purgePublished();

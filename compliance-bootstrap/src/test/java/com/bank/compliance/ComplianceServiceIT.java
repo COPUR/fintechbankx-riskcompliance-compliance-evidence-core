@@ -310,7 +310,7 @@ class ComplianceServiceIT {
             "select screening_id from sc_cmp_evidence.compliance_screening where transaction_id = 'PAY-RELAY-1'", String.class);
         when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
         OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
-            Clock.systemUTC(), 100, Duration.ofSeconds(5), Duration.ofDays(7), 10);
+            Clock.systemUTC(), 100, Duration.ofSeconds(5), Duration.ofDays(7), 10, Duration.ofHours(24));
 
         assertThat(relay.relayOnce()).isEqualTo(1);
 
@@ -347,7 +347,7 @@ class ComplianceServiceIT {
             """, parkedScreening);
         when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
         OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
-            Clock.systemUTC(), 100, Duration.ofSeconds(5), Duration.ofDays(7), 10);
+            Clock.systemUTC(), 100, Duration.ofSeconds(5), Duration.ofDays(7), 10, Duration.ofHours(24));
 
         assertThat(relay.relayOnce()).as("only the row behind the parked one").isEqualTo(1);
         assertThat(outbox.countByPublishedAtIsNullAndParkedAtIsNotNull()).isEqualTo(1);
@@ -441,6 +441,62 @@ class ComplianceServiceIT {
         assertThat(runtime.queryForObject(
                 "select decision from sc_cmp_evidence.compliance_screening where transaction_id = 'PAY-RUNTIME'", String.class))
             .isEqualTo("PASS");
+    }
+
+    /**
+     * Two replicas relay at once. The first holds the advisory lock while its
+     * send is in flight; the second must not read and send the same rows, so
+     * every event reaches Kafka exactly once.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void twoRelaysRunningConcurrentlySendEachRowExactlyOnce() throws Exception {
+        for (int i = 1; i <= 3; i++) {
+            screen("PAY-CONC-" + i, "C-1", "10.00", false, true, false).andExpect(status().isCreated());
+        }
+        List<String> sentKeys = new java.util.concurrent.CopyOnWriteArrayList<>();
+        CountDownLatch firstSendStarted = new CountDownLatch(1);
+        CountDownLatch releaseSends = new CountDownLatch(1);
+        when(kafka.send(any(ProducerRecord.class))).thenAnswer(call -> {
+            sentKeys.add(((ProducerRecord<String, String>) call.getArgument(0)).key());
+            firstSendStarted.countDown();
+            return CompletableFuture.supplyAsync(() -> {
+                await(releaseSends);
+                return (SendResult<String, String>) null;
+            });
+        });
+        OutboxRelay first = relay();
+        OutboxRelay second = relay();
+        ExecutorService threads = Executors.newFixedThreadPool(2);
+        try {
+            Future<Integer> firstRun = threads.submit(first::relayOnce);
+            assertThat(firstSendStarted.await(10, TimeUnit.SECONDS)).isTrue();
+            Future<Integer> secondRun = threads.submit(second::relayOnce);
+            // With the lock the second relay returns at once; without it, it would be sending the same rows.
+            Integer secondSent = null;
+            try {
+                secondSent = secondRun.get(2, TimeUnit.SECONDS);
+            } catch (java.util.concurrent.TimeoutException stillSending) {
+                // fall through: release the sends and count what reached Kafka
+            }
+            releaseSends.countDown();
+            assertThat(firstRun.get(20, TimeUnit.SECONDS)).isEqualTo(3);
+            if (secondSent == null) {
+                secondSent = secondRun.get(20, TimeUnit.SECONDS);
+            }
+            assertThat(secondSent).isZero();
+        } finally {
+            releaseSends.countDown();
+            threads.shutdownNow();
+        }
+
+        assertThat(sentKeys).hasSize(3).doesNotHaveDuplicates();
+        assertThat(outbox.countByPublishedAtIsNullAndParkedAtIsNull()).isZero();
+    }
+
+    private OutboxRelay relay() {
+        return new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
+            Clock.systemUTC(), 100, Duration.ofSeconds(15), Duration.ofDays(7), 10, Duration.ofHours(24));
     }
 
     private int outboxRows() {
