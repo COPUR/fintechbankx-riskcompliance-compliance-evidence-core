@@ -281,10 +281,10 @@ class OutboxRelayTest {
 
         relay.relayOnce();
 
-        assertThat(meters.get("outbox.publish.failures").tag("exception", "RecordTooLargeException").counter().count()).isEqualTo(1);
-        assertThat(meters.get("outbox.publish.failures").tag("exception", "SaslAuthenticationException").counter().count()).isEqualTo(1);
-        assertThat(meters.get("outbox.publish.failures").tag("exception", "SaslAuthenticationException").counter().getId().getTags())
-            .extracting(io.micrometer.core.instrument.Tag::getKey).containsExactlyInAnyOrder("exception", "service");
+        assertThat(meters.get("outbox.send.failures").tag("exception", "RecordTooLargeException").counter().count()).isEqualTo(1);
+        assertThat(meters.get("outbox.send.failures").tag("exception", "SaslAuthenticationException").counter().count()).isEqualTo(1);
+        assertThat(meters.get("outbox.send.failures").tag("exception", "SaslAuthenticationException").counter().getId().getTags())
+            .extracting(io.micrometer.core.instrument.Tag::getKey).containsExactly("exception");
     }
 
     @Test

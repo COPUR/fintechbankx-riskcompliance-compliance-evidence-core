@@ -72,6 +72,9 @@ jobs:
               | python3 scripts/ci/check-externalsecrets.py "$sa" 2>/dev/null; then
             echo "ExternalSecret check accepted a key outside <env>/$sa/" >&2; exit 1
           fi
+          # Platform metric tags: app = the service account, squad = compliance (application.yml reads both).
+          grep -qx "  METRICS_APP: \"$sa\"" <<<"$rendered"
+          grep -qx '  METRICS_SQUAD: "compliance"' <<<"$rendered"
           helm template ci "$chart" $args --set kafkaClientTls.enabled=true --set config.SPRING_PROFILES_ACTIVE=kafka-strimzi > /dev/null
 
   terraform:
