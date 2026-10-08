@@ -61,7 +61,7 @@ Packages follow the service guardrails (ADR-028): use case and command in `domai
 
 ### Published events
 
-Contract: [`api/asyncapi/svc-cmp-evidence.yaml`](api/asyncapi/svc-cmp-evidence.yaml) (provider copy; the AsyncAPI catalog mirrors it). Status: Proposed.
+Contract: [`api/asyncapi/svc-cmp-evidence.yaml`](api/asyncapi/svc-cmp-evidence.yaml) (provider copy). Status: Proposed. The catalog entry for this contract is proposed in fintechbankx-governance-architecture-enablement-asyncapi-catalog PR #11 (not merged), and the topics are not yet created on the platform cluster.
 
 | published_events | Event type | Key | When |
 |---|---|---|---|
@@ -69,7 +69,7 @@ Contract: [`api/asyncapi/svc-cmp-evidence.yaml`](api/asyncapi/svc-cmp-evidence.y
 
 Screening facts (amount, currency, sanctions/KYC/PEP flags) are **caller-attested** and stored with each result together with the rule set version; see [decision 0001](docs/architecture/decisions/0001-screening-facts-are-caller-attested.md). Results are insert-only.
 
-Events go through a transactional outbox (`sc_cmp_evidence.outbox_event`, written in the same database transaction as the screening) and are relayed to Kafka (Amazon MSK, IAM auth) by `OutboxRelay`. Payloads carry ids, the decision, reason codes and the screening time; the screening inputs (sanctions, PEP and KYC flags, amount) are not published. Runtime settings: `KAFKA_BOOTSTRAP_SERVERS`, `KAFKA_SECURITY_PROTOCOL`, `SPRING_PROFILES_ACTIVE=kafka-msk` on AWS (`kafka-strimzi` in-cluster), `OUTBOX_RELAY_ENABLED`. Backlog metric: `outbox_pending_events{service="svc-cmp-evidence"}`.
+Events go through a transactional outbox (`sc_cmp_evidence.outbox_event`, written in the same database transaction as the screening) and are relayed to Kafka (Amazon MSK, IAM auth) by `OutboxRelay`. Payloads carry ids, the decision, reason codes and the screening time; the screening inputs (sanctions, PEP and KYC flags, amount) are not published. Runtime settings: `KAFKA_BOOTSTRAP_SERVERS`, `KAFKA_SECURITY_PROTOCOL`, `SPRING_PROFILES_ACTIVE=kafka-msk` on AWS (`kafka-strimzi` in-cluster), `OUTBOX_RELAY_ENABLED`. Backlog metric: `outbox_pending_events{service="svc-cmp-evidence"}`; parked events: `outbox_parked_events` (alert above 0, replay per the runbook). The chart ships `OUTBOX_RELAY_ENABLED` "false" until the namespace has MSK egress.
 
 ## Dokümantasyon ve Referanslar
 - [Enterprise Architecture Hub](https://github.com/COPUR/fintechbankx-governance-architecture-enablement-enterprise-architecture)

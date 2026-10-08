@@ -108,7 +108,7 @@ parked and record the decision here.
 - [ ] Payment services call this API (follow-up in the payments repositories)
 - [x] Screening events written through a transactional outbox in the screening's transaction; one event per new screening, none on retries or when a concurrent duplicate loses (`ComplianceServiceIT`); screening inputs not published
 - [x] Outbox rows that can never be sent are parked (non-retryable error or attempt cap), skipped, counted by `outbox_parked_events` and replayed by hand (`OutboxRelayTest`, `ComplianceServiceIT`)
-- [ ] AsyncAPI catalog mirror updated from `api/asyncapi/svc-cmp-evidence.yaml` (provider copy changes `screeningId` from `format: uuid` to the `CMP-<uuid>` pattern)
+- [ ] AsyncAPI catalog entry (proposed in asyncapi-catalog PR #11, not merged) matches `api/asyncapi/svc-cmp-evidence.yaml` (provider copy changes `screeningId` from `format: uuid` to the `CMP-<uuid>` pattern)
 - [ ] Topic `evt.cmp.compliance.screened.v1` and its DLQ created on the platform cluster; IRSA `msk_cluster_arn` set
 - [ ] Mesh contract lists `msk` for `compliance-evidence-service` (allow-egress-msk generated for namespace `compliance`); until then the chart keeps the relay off
 - [ ] Report generation and the review/submission workflow moved here (precondition for step 3; today only the history is mirrored)
