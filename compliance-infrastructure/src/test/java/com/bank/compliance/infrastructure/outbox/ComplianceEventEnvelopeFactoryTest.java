@@ -71,14 +71,19 @@ class ComplianceEventEnvelopeFactoryTest {
 
         JsonNode data = envelope.get("data");
         assertThat(data.fieldNames()).toIterable().containsExactly(
-                "screeningId", "transactionId", "customerId", "decision", "reasons", "checkedAt");
+                "screeningId", "transactionId", "customerId", "decision", "checkedAt");
         assertThat(data.get("screeningId").asText()).isEqualTo(SCREENING_ID);
         assertThat(data.get("transactionId").asText()).isEqualTo("PAY-77");
         assertThat(data.get("customerId").asText()).isEqualTo("C-42");
         assertThat(data.get("decision").asText()).isEqualTo("FAIL");
-        assertThat(data.get("reasons")).hasSize(1);
-        assertThat(data.get("reasons").get(0).asText()).isEqualTo("SANCTIONS_HIT");
         assertThat(data.get("checkedAt").asText()).isEqualTo("2026-10-08T09:15:30.123456Z");
+    }
+
+    @Test
+    void reasonCodesAreNeverPublished() {
+        String payload = factory.toOutboxRow(screened(ComplianceDecision.FAIL, List.of("SANCTIONS_HIT")), "corr-4").getPayload();
+
+        assertThat(payload).doesNotContain("\"reasons\"", "\"reasonCodes\"", "SANCTIONS_HIT");
     }
 
     @Test

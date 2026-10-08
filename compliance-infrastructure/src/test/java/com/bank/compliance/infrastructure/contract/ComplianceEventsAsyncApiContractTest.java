@@ -59,10 +59,9 @@ class ComplianceEventsAsyncApiContractTest {
         assertThat(data.get("screeningId").asText()).matches(pattern(dataSchema, "screeningId"));
         assertThat((List<String>) path(dataSchema, "properties", "decision").get("enum"))
                 .containsExactlyInAnyOrder(names(ComplianceDecision.values()));
-        String reasonPattern = (String) path(dataSchema, "properties", "reasons", "items").get("pattern");
-        for (String reason : List.of("SANCTIONS_HIT", "KYC_NOT_VERIFIED", "PEP_HIGH_VALUE_REVIEW", "COMPLIANT")) {
-            assertThat(reason).matches(reasonPattern);
-        }
+        assertThat(((Map<String, Object>) dataSchema.get("properties")).keySet())
+                .as("reason codes are restricted and stay out of the event contract")
+                .doesNotContain("reasons", "reasonCodes");
     }
 
     private static String pattern(Map<String, Object> schema, String property) {

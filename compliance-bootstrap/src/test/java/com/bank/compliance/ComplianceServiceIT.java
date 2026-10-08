@@ -138,7 +138,8 @@ class ComplianceServiceIT {
                    payload->'data'->>'screeningId' as data_screening_id,
                    payload->'data'->>'transactionId' as data_transaction_id,
                    payload->'data'->>'decision' as data_decision,
-                   payload->'data'->'reasons'->>0 as data_reason,
+                   jsonb_exists(payload->'data', 'reasons') as has_reasons,
+                   jsonb_exists(payload->'data', 'reasonCodes') as has_reason_codes,
                    jsonb_exists(payload->'data', 'amount') as has_amount,
                    published_at
             from sc_cmp_evidence.outbox_event
@@ -156,10 +157,11 @@ class ComplianceServiceIT {
             .containsEntry("data_screening_id", screeningId)
             .containsEntry("data_transaction_id", "PAY-EVT-1")
             .containsEntry("data_decision", "REVIEW")
-            .containsEntry("data_reason", "PEP_HIGH_VALUE_REVIEW")
+            .containsEntry("has_reasons", false)
+            .containsEntry("has_reason_codes", false)
             .containsEntry("has_amount", false)
             .containsEntry("published_at", null);
-        assertThat(response).contains(screeningId);
+        assertThat(response).contains(screeningId).contains("PEP_HIGH_VALUE_REVIEW");
 
         screen("PAY-EVT-1", "C-7", "12000.00", false, true, true).andExpect(status().isCreated());
         screen("PAY-EVT-1", "C-7", "12000.00", false, true, true).andExpect(status().isCreated());
