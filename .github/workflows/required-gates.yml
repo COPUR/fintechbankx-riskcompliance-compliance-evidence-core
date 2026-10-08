@@ -195,12 +195,16 @@ jobs:
         if: ${{ hashFiles('api/asyncapi/*.yaml') != '' }}
         env:
           NPM_CONFIG_CACHE: /tmp/.npm
+          ASYNCAPI_DIR: api/asyncapi
           BASE_REF: origin/main
         shell: bash
         run: |
-          # Catalog script copied unchanged (asyncapi-catalog a7b9b9d); a spec not yet on main is "new file, skipped".
+          # Catalog script and lib copied unchanged (asyncapi-catalog b0e31ee, which adds ASYNCAPI_DIR) and run
+          # from the repository root as the catalog's scripts/ci/asyncapi-breaking.sh does; needs fetch-depth 0.
+          # A spec not yet on main is "new file (not at base)", skipped.
           npm ci --prefix scripts/ci/asyncapi --ignore-scripts
-          ./scripts/ci/asyncapi/run-breaking.sh
+          cd "$(git rev-parse --show-toplevel)"
+          node scripts/ci/asyncapi/asyncapi-breaking.mjs
 
       - name: Guardrail - disallow generic map request payloads
         shell: bash

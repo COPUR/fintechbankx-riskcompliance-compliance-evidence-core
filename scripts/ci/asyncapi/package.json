@@ -2,7 +2,7 @@
   "name": "svc-cmp-evidence-asyncapi-breaking",
   "version": "0.0.0",
   "private": true,
-  "description": "Runs the asyncapi-catalog breaking-change gate (copied unchanged from catalog a7b9b9d) on api/asyncapi.",
+  "description": "Runs the asyncapi-catalog breaking-change gate (copied unchanged from catalog b0e31ee) on api/asyncapi with ASYNCAPI_DIR.",
   "type": "module",
   "engines": {
     "node": ">=22"
