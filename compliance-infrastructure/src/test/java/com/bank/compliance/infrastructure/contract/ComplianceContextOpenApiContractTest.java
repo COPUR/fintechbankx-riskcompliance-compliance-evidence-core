@@ -48,7 +48,8 @@ class ComplianceContextOpenApiContractTest {
         Map<String, Object> request = (Map<String, Object>) schemas.get("ComplianceScreeningRequest");
         Map<String, Object> properties = (Map<String, Object>) request.get("properties");
 
-        assertThat((List<String>) request.get("required")).contains("sanctionsHit", "kycVerified", "pep");
+        assertThat((List<String>) request.get("required")).contains("currency", "sanctionsHit", "kycVerified", "pep");
+        assertThat((Map<String, Object>) properties.get("currency")).doesNotContainKey("default");
         assertThat((Map<String, Object>) properties.get("sanctionsHit")).doesNotContainKey("default");
         assertThat((Map<String, Object>) properties.get("pep")).doesNotContainKey("default");
         assertThat((Map<String, Object>) properties.get("kycVerified")).doesNotContainKey("default");

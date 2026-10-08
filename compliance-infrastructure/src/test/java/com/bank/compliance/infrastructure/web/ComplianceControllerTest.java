@@ -54,7 +54,7 @@ class ComplianceControllerTest {
         mockMvc.perform(post("/api/v1/compliance/screen")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                            {"transactionId":"TX-1","customerId":"C1","amount":12000,"sanctionsHit":false,"kycVerified":true,"pep":true}
+                            {"transactionId":"TX-1","customerId":"C1","amount":12000,"currency":"USD","sanctionsHit":false,"kycVerified":true,"pep":true}
                         """))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.transactionId").value("TX-1"))
@@ -84,7 +84,7 @@ class ComplianceControllerTest {
         mockMvc.perform(post("/api/v1/compliance/screen")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                            {"transactionId":"TX-3","customerId":"C2","amount":10,"sanctionsHit":false,"kycVerified":true,"pep":false}
+                            {"transactionId":"TX-3","customerId":"C2","amount":10,"currency":"USD","sanctionsHit":false,"kycVerified":true,"pep":false}
                         """))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("TRANSACTION_ALREADY_SCREENED"));
@@ -95,7 +95,7 @@ class ComplianceControllerTest {
         mockMvc.perform(post("/api/v1/compliance/screen")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                            {"transactionId":"TX-4","customerId":"C1","amount":-1,"sanctionsHit":false,"kycVerified":true,"pep":false}
+                            {"transactionId":"TX-4","customerId":"C1","amount":-1,"currency":"USD","sanctionsHit":false,"kycVerified":true,"pep":false}
                         """))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
@@ -160,6 +160,22 @@ class ComplianceControllerTest {
         expectInvalid("""
                 {"transactionId":"TX-9","customerId":"C1","amount":10,"currency":"USD","sanctionsHit":false,"kycVerified":true,"pep":null}
                 """, "pep is required");
+        org.mockito.Mockito.verify(service, org.mockito.Mockito.never()).screen(any());
+    }
+
+    /**
+     * Omitted or null currency is a 400: a default would judge the amount
+     * against another currency's PEP threshold and record a currency the
+     * caller never stated.
+     */
+    @Test
+    void omittedOrNullCurrencyIsA400AndNothingIsScreened() throws Exception {
+        expectInvalid("""
+                {"transactionId":"TX-14","customerId":"C1","amount":30000,"sanctionsHit":false,"kycVerified":true,"pep":true}
+                """, "currency is required");
+        expectInvalid("""
+                {"transactionId":"TX-14","customerId":"C1","amount":30000,"currency":null,"sanctionsHit":false,"kycVerified":true,"pep":true}
+                """, "currency is required");
         org.mockito.Mockito.verify(service, org.mockito.Mockito.never()).screen(any());
     }
 

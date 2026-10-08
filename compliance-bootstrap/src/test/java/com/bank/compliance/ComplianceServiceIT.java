@@ -579,7 +579,7 @@ class ComplianceServiceIT {
     private static String body(String transactionId, String customerId, String amount,
                                boolean sanctionsHit, boolean kycVerified, boolean pep) {
         return """
-            {"transactionId": "%s", "customerId": "%s", "amount": %s, "sanctionsHit": %s, "kycVerified": %s, "pep": %s}
+            {"transactionId": "%s", "customerId": "%s", "amount": %s, "currency": "USD", "sanctionsHit": %s, "kycVerified": %s, "pep": %s}
             """.formatted(transactionId, customerId, amount, sanctionsHit, kycVerified, pep);
     }
 

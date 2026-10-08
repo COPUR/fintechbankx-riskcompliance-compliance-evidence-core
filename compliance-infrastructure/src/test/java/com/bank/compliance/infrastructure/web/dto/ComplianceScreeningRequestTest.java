@@ -10,11 +10,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class ComplianceScreeningRequestTest {
 
     @Test
-    void currencyDefaultsToUsdForCallersThatDoNotSendIt() {
-        var command = new ComplianceScreeningRequest("TX-1", "C-1", new BigDecimal("10.00"), null, false, true, false).toCommand(com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS);
-
-        assertThat(command.currency()).isEqualTo("USD");
-        assertThat(command.facts().amount()).isEqualByComparingTo("10.00");
+    void aMissingCurrencyIsRefusedNotDefaulted() {
+        assertThatThrownBy(() -> new ComplianceScreeningRequest("TX-1", "C-1", new BigDecimal("10.00"), null, false, true, false)
+                .toCommand(com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("currency is required");
     }
 
     @Test
