@@ -194,14 +194,9 @@ jobs:
       - name: Guardrail - disallow generic map request payloads
         shell: bash
         run: |
-          if [ -d src/main/java ]; then
-            if grep -R -nE "Map<\s*String\s*,\s*Object\s*>" src/main/java --include="*Controller.java"; then
-              echo "Generic Map<String,Object> payloads are disallowed in controllers."
-              exit 1
-            fi
-          else
-            echo "No Java controller sources in this repository; guardrail check skipped."
-          fi
+          ./scripts/ci/check-generic-maps.sh .
+          # The gate itself must reject a Map<String,Object> planted in a module controller or DTO.
+          ./scripts/ci/test-generic-maps-gate.sh
 
   security:
     name: ci/security
