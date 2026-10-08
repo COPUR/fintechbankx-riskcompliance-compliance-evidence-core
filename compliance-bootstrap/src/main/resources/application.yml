@@ -123,7 +123,8 @@ compliance:
   outbox:
     retention: P7D
     relay:
-      enabled: ${OUTBOX_RELAY_ENABLED:true}
+      # Off unless the environment turns it on (the chart sets it per environment).
+      enabled: ${OUTBOX_RELAY_ENABLED:false}
       interval: PT1S
       batch-size: 100
       # Longer than delivery.timeout.ms, so the relay never abandons a send Kafka

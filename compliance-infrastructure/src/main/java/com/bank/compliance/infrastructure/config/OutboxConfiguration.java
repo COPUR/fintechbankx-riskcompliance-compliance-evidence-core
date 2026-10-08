@@ -85,12 +85,12 @@ public class OutboxConfiguration {
 
     /**
      * The relay runs in every replica; the advisory lock lets only one of
-     * them publish at a time. Disable with compliance.outbox.relay.enabled=false
-     * (tests, or a dedicated relay deployment).
+     * them publish at a time. Off unless compliance.outbox.relay.enabled=true
+     * (OUTBOX_RELAY_ENABLED), so a pod or local run without Kafka never sends.
      */
     @Configuration
     @EnableScheduling
-    @ConditionalOnProperty(name = "compliance.outbox.relay.enabled", havingValue = "true", matchIfMissing = true)
+    @ConditionalOnProperty(name = "compliance.outbox.relay.enabled", havingValue = "true", matchIfMissing = false)
     static class RelayConfiguration {
 
         @Bean
