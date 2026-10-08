@@ -92,16 +92,19 @@ After a run that stopped on a failure the relay backs off: it waits
 `compliance.outbox.relay.backoff-initial` (`PT1S`), doubling per stopped run up
 to `backoff-max` (`PT5M`), and resets after a run that does not stop.
 
-Alerts (the chart ships no PrometheusRule; add these to the observability
-repository's alert catalogue):
+Alerts route to the owning squad, `squad="compliance"` (Risk and Compliance
+Decisioning Squad). Platform builds one rule per service on these metric names;
+every meter carries the common tags `app` (the chart's service account,
+`compliance-evidence-service`) and `squad`. The chart ships no PrometheusRule;
+add any extra rules to the observability repository's alert catalogue:
 
 ```promql
 # the relay is stalled (outage, credentials, ACL) or off: the backlog waits, it is not lost
-max(outbox_oldest_pending_age_seconds{service="svc-cmp-evidence"}) > 900
+max(outbox_oldest_pending_age_seconds{app="compliance-evidence-service", squad="compliance"}) > 900
 # rows that need a decision
-max(outbox_parked_events{service="svc-cmp-evidence"}) > 0
+max(outbox_parked_events{app="compliance-evidence-service", squad="compliance"}) > 0
 # what is failing, by exception class
-sum by (exception) (rate(outbox_publish_failures_total{service="svc-cmp-evidence"}[5m])) > 0
+sum by (exception) (rate(outbox_send_failures_total{app="compliance-evidence-service", squad="compliance"}[5m])) > 0
 ```
  Two replicas never send the same row: the relay holds a PostgreSQL
 advisory lock for its run (`ComplianceServiceIT.twoRelaysRunningConcurrentlySendEachRowExactlyOnce`).

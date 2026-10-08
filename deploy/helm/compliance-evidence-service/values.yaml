@@ -99,3 +99,7 @@ kafkaClientTls:
   enabled: false
   secretName: kafka-client-tls
   brokerPort: 9093
+
+# Common metric tags. app is the serviceAccount name above; squad owns the alerts.
+metrics:
+  squad: compliance

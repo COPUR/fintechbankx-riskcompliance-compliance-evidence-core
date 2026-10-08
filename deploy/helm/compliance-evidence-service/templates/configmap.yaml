@@ -11,3 +11,6 @@ data:
   {{- range $key, $value := .Values.config }}
   {{ $key }}: {{ $value | quote }}
   {{- end }}
+  # Common metric tags (application.yml management.metrics.tags): app = service account, squad = owner.
+  METRICS_APP: {{ .Values.serviceAccount.name | quote }}
+  METRICS_SQUAD: {{ .Values.metrics.squad | quote }}

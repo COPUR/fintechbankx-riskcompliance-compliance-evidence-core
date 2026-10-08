@@ -46,8 +46,7 @@ public class OutboxRelay {
 
     // Distinct from the other services' keys ("cus_out"...) in case a database is ever shared.
     static final long RELAY_LOCK_KEY = 0x636D705F6F7574L; // "cmp_out"
-    static final String PUBLISH_FAILURES = "outbox.publish.failures";
-    private static final String SERVICE_ID = "svc-cmp-evidence";
+    static final String SEND_FAILURES = "outbox.send.failures";
     private static final Logger log = LoggerFactory.getLogger(OutboxRelay.class);
 
     private final SpringDataOutboxRepository outbox;
@@ -175,7 +174,7 @@ public class OutboxRelay {
 
     /** Alert signal: failed sends by exception class (simple name only, never ids or messages). */
     private void countFailure(Throwable cause) {
-        meters.counter(PUBLISH_FAILURES, "service", SERVICE_ID, "exception", cause.getClass().getSimpleName()).increment();
+        meters.counter(SEND_FAILURES, "exception", cause.getClass().getSimpleName()).increment();
     }
 
     public int purgePublished() {

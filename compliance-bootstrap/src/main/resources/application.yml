@@ -99,8 +99,12 @@ management:
         liveness:
           include: livenessState
   metrics:
+    # Common tags on every meter. Platform alert rules select outbox meters by app and squad;
+    # the chart sets METRICS_APP to its service account name and METRICS_SQUAD to compliance.
     tags:
       service: svc-cmp-evidence
+      app: ${METRICS_APP:compliance-evidence-service}
+      squad: ${METRICS_SQUAD:compliance}
     distribution:
       percentiles-histogram:
         http.server.requests: true
