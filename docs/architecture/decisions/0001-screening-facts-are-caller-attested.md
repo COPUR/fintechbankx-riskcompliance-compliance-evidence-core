@@ -21,8 +21,8 @@ stated. Evidence that hides this would overstate what compliance checked.
 
 1. Every screening records where its facts came from: `attestation_source`
    on `sc_cmp_evidence.compliance_screening`, `AttestationSource` in the domain,
-   and the additive `attestation` field on the API response. The only value
-   today is `CALLER_ATTESTED`.
+   and the additive `attestation` field on the API response. Values: `CALLER_ATTESTED`
+   (a listed service) and `STAFF_ATTESTED` (a compliance officer or administrator).
 2. The facts themselves (amount, currency, the three flags) and the rule set
    version are stored with the decision. A replay of the same `transactionId`
    must state the same customer and the same facts to get the stored result;
@@ -47,10 +47,23 @@ stated. Evidence that hides this would overstate what compliance checked.
   `evt.cus.customer.*` events) instead of the caller's `kycVerified`.
 - Run sanctions and PEP lookups in compliance (list provider to be chosen by
   the squad and Group Compliance).
-- Decide whether the PEP high-value threshold (10000) is per currency; today
-  it ignores the currency.
+- Confirm the per-currency PEP high-value thresholds (see the note below).
 - Decide whether a replay with different facts should be refused (current
   default) or screened as new evidence under a new id.
+
+## Note: rule set v2, per-currency PEP thresholds (Proposed)
+
+Rule set `cmp-screening-rules-v2` judges a PEP's amount only against the
+threshold for its own currency (`PepHighValueThresholds`; the default lists
+USD 10000 only). A PEP screening in a currency with no threshold goes to
+REVIEW with `UNSUPPORTED_CURRENCY`, so an amount is never compared with
+another currency's threshold. `currency` is a required request field, never
+defaulted. The thresholds and the currencies they cover are Proposed and need
+the owning squad's and Group Compliance's confirmation; no approval is
+recorded here. Changing any threshold changes the rule set version.
+
+`attested_by` stores the token `azp` of a service or the
+`sub` of a staff member.
 
 ## Reversibility
 

@@ -169,7 +169,7 @@ parked and record the decision here.
 - [ ] Mesh contract lists `msk` for `compliance-evidence-service` (allow-egress-msk generated for namespace `compliance`); until then the chart keeps the relay off
 - [ ] Report generation and the review/submission workflow moved here (precondition for step 3; today only the history is mirrored)
 - [ ] Plan for report files at `report_file_path` (not migrated)
-- [x] Runtime role separated from the migration owner: V7 grants, Flyway `DB_MIGRATION_*` credentials, Helm migration secret, Terraform secret; the runtime role cannot `UPDATE`/`DELETE`/`TRUNCATE` evidence or disable the trigger (`ComplianceServiceIT`)
+- [x] Runtime role separation: grants and IT in place (V7 grants, Flyway `DB_MIGRATION_*` credentials, Helm migration secret, Terraform secret; in the IT the runtime role cannot `UPDATE`/`DELETE`/`TRUNCATE` evidence or disable the trigger, `ComplianceServiceIT`); effective in an environment only after the DBA bootstrap and the migration Job have run there. The owner credential is still mounted in the service pods (open)
 - [ ] DBA bootstrap of `compliance_evidence_owner` and `compliance_evidence_app` per environment, secrets filled
 - [ ] Flyway moved out of the pods into a migration Job, so the pods no longer hold the owner credential
 - [ ] Production backfill and reconciliation report attached here
