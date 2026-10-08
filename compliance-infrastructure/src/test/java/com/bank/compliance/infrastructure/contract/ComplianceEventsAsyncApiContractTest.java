@@ -64,6 +64,17 @@ class ComplianceEventsAsyncApiContractTest {
                 .doesNotContain("reasons", "reasonCodes");
     }
 
+    /** The topic's .vN suffix is the contract's major version; a breaking change is a new topic. */
+    @Test
+    void infoVersionMajorMatchesTheTopicVersion() throws Exception {
+        Map<String, Object> contract = load("svc-cmp-evidence.yaml");
+        String version = (String) path(contract, "info").get("version");
+        String topic = (String) path(contract, "channels", "screened").get("address");
+
+        assertThat(topic).matches(".*\\.v[0-9]+$");
+        assertThat(version.split("\\.")[0]).isEqualTo(topic.substring(topic.lastIndexOf(".v") + 2));
+    }
+
     private static String pattern(Map<String, Object> schema, String property) {
         return (String) path(schema, "properties", property).get("pattern");
     }

@@ -103,6 +103,26 @@ class ComplianceServiceIT {
         assertThat(tables).containsExactly("compliance_screening", "legacy_compliance_report", "outbox_event");
     }
 
+    /** The schema is unreleased: no NULL-tolerant compatibility path, every check validated. */
+    @Test
+    void attestedByAndTheReportCurrencyAreMandatoryAndTheirChecksValidated() {
+        List<Map<String, Object>> columns = jdbc.queryForList("""
+            select table_name, column_name, is_nullable from information_schema.columns
+            where table_schema = 'sc_cmp_evidence'
+              and (table_name, column_name) in (('compliance_screening', 'attested_by'),
+                                                ('legacy_compliance_report', 'total_amount_currency'))
+            order by table_name
+            """);
+        assertThat(columns).extracting(c -> c.get("column_name") + "=" + c.get("is_nullable"))
+            .containsExactly("attested_by=NO", "total_amount_currency=NO");
+
+        List<String> notValidated = jdbc.queryForList("""
+            select conname from pg_constraint c join pg_namespace n on n.oid = c.connamespace
+            where n.nspname = 'sc_cmp_evidence' and not c.convalidated
+            """, String.class);
+        assertThat(notValidated).as("NOT VALID constraints").isEmpty();
+    }
+
     @Test
     void screeningIsStoredOnceAndReturnedOnRetry() throws Exception {
         String first = screen("PAY-CMP-1", "C-1", "12000.00", false, true, true)
