@@ -134,6 +134,11 @@ compliance:
       # Never parks a row. From this many failed sends of one row on, each retriable
       # failure is logged at ERROR instead of WARN (runbook "Parked outbox events").
       max-attempts: ${OUTBOX_RELAY_MAX_ATTEMPTS:10}
+      # After a run that stopped on a failure, wait this long before the next one,
+      # doubling per stopped run up to backoff-max; a run that does not stop resets it
+      # (ADR-021 decision 4: retry with backoff and alert).
+      backoff-initial: ${OUTBOX_RELAY_BACKOFF_INITIAL:PT1S}
+      backoff-max: ${OUTBOX_RELAY_BACKOFF_MAX:PT5M}
 
 logging:
   pattern:

@@ -88,10 +88,22 @@ never parks a row: from that many failed sends of one row on, each retry is
 logged at ERROR instead of WARN. Parked rows keep `parked_at`, `first_failed_at`,
 `attempts` and `last_error` and are skipped by the relay.
 
-Alerts: `outbox_parked_events{service="svc-cmp-evidence"} > 0` (rows that need
-a decision), and `outbox_oldest_pending_age_seconds` above a few minutes (the
-relay is stalled on a retriable failure, or off; the backlog is waiting, not
-lost). Two replicas never send the same row: the relay holds a PostgreSQL
+After a run that stopped on a failure the relay backs off: it waits
+`compliance.outbox.relay.backoff-initial` (`PT1S`), doubling per stopped run up
+to `backoff-max` (`PT5M`), and resets after a run that does not stop.
+
+Alerts (the chart ships no PrometheusRule; add these to the observability
+repository's alert catalogue):
+
+```promql
+# the relay is stalled (outage, credentials, ACL) or off: the backlog waits, it is not lost
+max(outbox_oldest_pending_age_seconds{service="svc-cmp-evidence"}) > 900
+# rows that need a decision
+max(outbox_parked_events{service="svc-cmp-evidence"}) > 0
+# what is failing, by exception class
+sum by (exception) (rate(outbox_publish_failures_total{service="svc-cmp-evidence"}[5m])) > 0
+```
+ Two replicas never send the same row: the relay holds a PostgreSQL
 advisory lock for its run (`ComplianceServiceIT.twoRelaysRunningConcurrentlySendEachRowExactlyOnce`).
 
 Replay once the cause is fixed (topic created, ACL granted, payload issue
