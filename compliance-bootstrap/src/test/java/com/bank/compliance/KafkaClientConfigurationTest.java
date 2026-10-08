@@ -34,6 +34,9 @@ class KafkaClientConfigurationTest {
             .containsEntry("max.in.flight.requests.per.connection", "5")
             .containsEntry("delivery.timeout.ms", "30000")
             .doesNotContainKey("sasl.mechanism");
+        // send() blocks on missing metadata (for example a topic that does not exist yet) for at most
+        // max.block.ms, Kafka's default being 60 s; one relay tick holds a DB connection and the relay lock.
+        assertThat(producer).containsEntry("max.block.ms", "10000");
         assertThat(kafka(null).getAdmin().isAutoCreate()).as("services never create topics").isFalse();
     }
 
@@ -42,6 +45,8 @@ class KafkaClientConfigurationTest {
         Map<String, Object> producer = new java.util.HashMap<>(producerProperties(null));
         producer.put("bootstrap.servers", "localhost:9092");
         // Kafka rejects delivery.timeout.ms < linger.ms + request.timeout.ms at construction; no broker is contacted.
+        org.apache.kafka.clients.producer.ProducerConfig config = new org.apache.kafka.clients.producer.ProducerConfig(producer);
+        assertThat(config.getLong("max.block.ms")).isEqualTo(10_000L);
         new org.apache.kafka.clients.producer.KafkaProducer<String, String>(producer).close(java.time.Duration.ZERO);
     }
 
