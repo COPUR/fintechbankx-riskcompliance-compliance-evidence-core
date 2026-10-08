@@ -37,7 +37,7 @@ payment services ─HTTP─▶ compliance-evidence-service pods (EKS namespace c
 The chart ships `OUTBOX_RELAY_ENABLED: "false"`. Preconditions before turning it on:
 
 1. The mesh contract (`fintechbankx-platform-mesh-security-service-mesh`, `contracts/mesh-contract.yaml`) lists `msk` for `compliance-evidence-service`, so allow-egress-msk is generated for namespace `compliance`; without it the default-deny egress drops the relay's connection to MSK port 9098.
-2. Topics `evt.cmp.compliance.screened.v1` and `evt.cmp.compliance.dlq.v1` exist on MSK, and `msk_cluster_arn` is set in Terraform.
+2. Topic `evt.cmp.compliance.screened.v1` exists on MSK (producer only, so no DLQ), and `msk_cluster_arn` is set in Terraform.
 
 Then deploy with `--set-string config.OUTBOX_RELAY_ENABLED=true` (or set it in the environment's values file). `outbox_pending_events` should drain to 0 and `outbox_parked_events` stay 0; parked rows are replayed by hand (runbook, "Parked outbox events").
 

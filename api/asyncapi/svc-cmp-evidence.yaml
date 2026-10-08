@@ -63,25 +63,6 @@ channels:
           retention.ms: 604800000
           max.message.bytes: 1048576
         bindingVersion: 0.5.0
-  deadLetter:
-    address: evt.cmp.compliance.dlq.v1
-    title: evt.cmp.compliance.dlq.v1
-    description: Dead-letter topic for the evt.cmp.compliance namespace. Written by consumers (not by svc-cmp-evidence)
-      after bounded retries; replayed by the owning consumer squad.
-    messages:
-      DeadLetter:
-        $ref: '#/components/messages/DeadLetter'
-    bindings:
-      kafka:
-        topic: evt.cmp.compliance.dlq.v1
-        partitions: 3
-        replicas: 3
-        topicConfiguration:
-          cleanup.policy:
-          - delete
-          retention.ms: 1209600000
-          max.message.bytes: 1048576
-        bindingVersion: 0.5.0
 operations:
   publishComplianceScreened:
     action: send
@@ -97,8 +78,6 @@ components:
       $ref: ./common/event-envelope.yaml#/EventEnvelope
     EventHeaders:
       $ref: ./common/event-envelope.yaml#/EventHeaders
-    DeadLetterHeaders:
-      $ref: ./common/event-envelope.yaml#/DeadLetterHeaders
     ComplianceScreenedData:
       type: object
       description: 'Payload of Compliance.ComplianceScreening.Screened.v1. Ids, the decision and reason codes only.
@@ -171,21 +150,6 @@ components:
             description: aggregateId (screeningId).
           bindingVersion: 0.5.0
       x-source-class: com.bank.compliance.domain.ComplianceScreenedEvent
-    DeadLetter:
-      name: DeadLetter
-      title: Dead letter for evt.cmp.compliance
-      summary: A message from this namespace that a consumer could not process after bounded retries.
-      contentType: application/json
-      headers:
-        $ref: '#/components/schemas/DeadLetterHeaders'
-      payload:
-        $ref: '#/components/schemas/EventEnvelope'
-      bindings:
-        kafka:
-          key:
-            type: string
-            description: Original record key (aggregateId).
-          bindingVersion: 0.5.0
   securitySchemes:
     mskIam:
       type: userPassword

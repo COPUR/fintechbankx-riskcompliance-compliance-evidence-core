@@ -59,7 +59,7 @@ The backfill is independent of the other contexts' backfills and idempotent. `sc
 | 2 | Payments call `POST /api/v1/compliance/screen` with the payment id as `transactionId` and a client-credentials token (`SERVICE` role), behind a flag | flag off; payments keep their local checks |
 | 3 | **Only when** report generation and the review/submission workflow run in `svc-cmp-evidence` (not yet built) **and** the report-file plan above is done: monolith stops writing `compliance_reports`; run the backfill a last time. Until then the monolith stays the writer and the backfill keeps re-running as a mirror | monolith table is still intact |
 | 4 | After the next regulatory reporting cycle: drop the monolith table | restore from snapshot |
-| 5 | Preconditions: the mesh contract lists `msk` for `compliance-evidence-service` (allow-egress-msk generated for namespace `compliance`); topics `evt.cmp.compliance.screened.v1` and `evt.cmp.compliance.dlq.v1` exist on MSK; `msk_cluster_arn` is set. Then turn the relay on with `--set-string config.OUTBOX_RELAY_ENABLED=true` (or in the environment's values file); watch `outbox_pending_events` drain and `outbox_parked_events` stay 0; consumers subscribe to `evt.cmp.compliance.screened.v1` | set it back to `"false"`; events stay in the outbox and are sent in order once it is back on |
+| 5 | Preconditions: the mesh contract lists `msk` for `compliance-evidence-service` (allow-egress-msk generated for namespace `compliance`); topic `evt.cmp.compliance.screened.v1` exists on MSK (no DLQ: this service consumes nothing); `msk_cluster_arn` is set. Then turn the relay on with `--set-string config.OUTBOX_RELAY_ENABLED=true` (or in the environment's values file); watch `outbox_pending_events` drain and `outbox_parked_events` stay 0; consumers subscribe to `evt.cmp.compliance.screened.v1` | set it back to `"false"`; events stay in the outbox and are sent in order once it is back on |
 
 ### Parked outbox events
 
@@ -120,7 +120,7 @@ parked and record the decision here.
 - [x] Screening events written through a transactional outbox in the screening's transaction; one event per new screening, none on retries or when a concurrent duplicate loses (`ComplianceServiceIT`); screening inputs not published
 - [x] Outbox rows that can never be sent are parked (non-retryable error at once; retriable errors only after `retryable-park-after`, default 24 h), skipped, counted by `outbox_parked_events` and replayed by hand; backlog age in `outbox_oldest_pending_age_seconds`; one sender at a time (`OutboxRelayTest`, `ComplianceServiceIT`)
 - [ ] AsyncAPI catalog entry (proposed in asyncapi-catalog PR #11, not merged) matches `api/asyncapi/svc-cmp-evidence.yaml` (provider copy changes `screeningId` from `format: uuid` to the `CMP-<uuid>` pattern)
-- [ ] Topic `evt.cmp.compliance.screened.v1` and its DLQ created on the platform cluster; IRSA `msk_cluster_arn` set
+- [ ] Topic `evt.cmp.compliance.screened.v1` created on the platform cluster (producer only, so no DLQ); IRSA `msk_cluster_arn` set
 - [ ] Mesh contract lists `msk` for `compliance-evidence-service` (allow-egress-msk generated for namespace `compliance`); until then the chart keeps the relay off
 - [ ] Report generation and the review/submission workflow moved here (precondition for step 3; today only the history is mirrored)
 - [ ] Plan for report files at `report_file_path` (not migrated)
