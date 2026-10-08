@@ -36,8 +36,12 @@ done
 psql_q -d "$src_db" -f "$root/db/backfill/test/monolith_fixture.sql"
 
 psql_q -d "$dst_db" -c "CREATE SCHEMA $schema"
+# Flyway placeholders, filled the way Flyway fills them in the service: the
+# runtime role is the connecting role here, so V7 takes its single-user path.
+runtime_role="${PGUSER:-$(id -un)}"
 for migration in "$root"/compliance-infrastructure/src/main/resources/db/migration/V*.sql; do
-  PGOPTIONS="-c search_path=$schema" psql_q -d "$dst_db" -f "$migration"
+  sed "s/\${runtime_role}/$runtime_role/g" "$migration" \
+    | PGOPTIONS="-c search_path=$schema" psql_q -d "$dst_db" -f -
 done
 
 for run in 1 2; do
