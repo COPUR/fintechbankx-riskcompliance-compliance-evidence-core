@@ -49,6 +49,12 @@ stated. Evidence that hides this would overstate what compliance checked.
   screening-time read, and the event `Customer.Customer.KycStatusChanged.v1`
   on `evt.cus.customer.kyc-status-changed.v1` to keep a local read model
   current. Both are Proposed until that PR merges.
+  `kycVerified` counts as sourced only on a successful read. A caller that
+  cannot read the KYC status (a 404 during an outage, an error, a timeout,
+  no token) must not screen: it answers a retryable 503 or parks the
+  payment. Screening evidence is insert-only, and a later re-screen of the
+  same transaction with different facts is a 409, so a guessed value would
+  stay on record.
 - Run sanctions and PEP lookups in compliance (list provider to be chosen by
   the squad and Group Compliance).
 - Confirm the per-currency PEP high-value thresholds (see the note below).
