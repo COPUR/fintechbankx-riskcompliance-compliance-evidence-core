@@ -11,6 +11,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -28,8 +29,12 @@ import java.util.concurrent.TimeoutException;
  * A row that can never be sent does not hold back every later event: a
  * non-retriable failure (RecordTooLargeException, SerializationException,
  * InvalidTopicException, TopicAuthorizationException, anything not
- * retriable), or the row's maxAttempts-th failed send, parks it (parked_at)
- * and the batch moves on. Parked rows are skipped, counted by the
+ * retriable) parks it (parked_at) at once and the batch moves on. A
+ * retriable failure parks a row only once it has kept failing for longer
+ * than retryableParkAfter since its first failure (first_failed_at), so a
+ * broker or egress outage delays events but parks none of them. From the
+ * maxAttempts-th failed send on, a retriable failure is logged at ERROR
+ * instead of WARN; the count never parks a row. Parked rows are skipped, counted by the
  * outbox.parked.events gauge and replayed by hand (runbook). Each screening
  * aggregate has one event, so skipping a parked row reorders no aggregate's
  * events.
@@ -48,10 +53,11 @@ public class OutboxRelay {
     private final Duration sendTimeout;
     private final Duration retention;
     private final int maxAttempts;
+    private final Duration retryableParkAfter;
 
     public OutboxRelay(SpringDataOutboxRepository outbox, KafkaTemplate<String, String> kafka,
                        TransactionTemplate transactions, Clock clock, int batchSize,
-                       Duration sendTimeout, Duration retention, int maxAttempts) {
+                       Duration sendTimeout, Duration retention, int maxAttempts, Duration retryableParkAfter) {
         if (maxAttempts < 1) {
             throw new IllegalArgumentException("maxAttempts must be at least 1");
         }
@@ -63,6 +69,10 @@ public class OutboxRelay {
         this.sendTimeout = sendTimeout;
         this.retention = retention;
         this.maxAttempts = maxAttempts;
+        this.retryableParkAfter = java.util.Objects.requireNonNull(retryableParkAfter, "retryableParkAfter is required");
+        if (retryableParkAfter.isNegative() || retryableParkAfter.isZero()) {
+            throw new IllegalArgumentException("retryableParkAfter must be positive");
+        }
     }
 
     /**
@@ -82,14 +92,21 @@ public class OutboxRelay {
                     sent++;
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
-                    row.markFailed("interrupted");
+                    row.markFailed("interrupted", clock.instant());
                     break;
                 } catch (Exception e) {
                     Throwable cause = unwrap(e);
-                    row.markFailed(describe(cause));
-                    if (isRetriable(cause) && row.getAttempts() < maxAttempts) {
-                        log.warn("Outbox relay could not publish event {} to {} (attempt {}); will retry",
-                            row.getEventId(), row.getTopic(), row.getAttempts(), e);
+                    Instant now = clock.instant();
+                    row.markFailed(describe(cause), now);
+                    boolean pastCeiling = Duration.between(row.getFirstFailedAt(), now).compareTo(retryableParkAfter) > 0;
+                    if (isRetriable(cause) && !pastCeiling) {
+                        if (row.getAttempts() >= maxAttempts) {
+                            log.error("Outbox relay still cannot publish event {} to {} (attempt {}, failing since {}); will retry",
+                                row.getEventId(), row.getTopic(), row.getAttempts(), row.getFirstFailedAt(), e);
+                        } else {
+                            log.warn("Outbox relay could not publish event {} to {} (attempt {}); will retry",
+                                row.getEventId(), row.getTopic(), row.getAttempts(), e);
+                        }
                         break;
                     }
                     row.markParked(clock.instant());

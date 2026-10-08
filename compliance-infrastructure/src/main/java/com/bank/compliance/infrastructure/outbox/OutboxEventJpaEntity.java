@@ -55,6 +55,9 @@ public class OutboxEventJpaEntity {
     @Column(name = "published_at")
     private Instant publishedAt;
 
+    @Column(name = "first_failed_at")
+    private Instant firstFailedAt;
+
     @Column(name = "parked_at")
     private Instant parkedAt;
 
@@ -94,6 +97,7 @@ public class OutboxEventJpaEntity {
     public Instant getOccurredAt() { return occurredAt; }
     public Instant getPublishedAt() { return publishedAt; }
     public Instant getParkedAt() { return parkedAt; }
+    public Instant getFirstFailedAt() { return firstFailedAt; }
     public int getAttempts() { return attempts; }
     public String getLastError() { return lastError; }
 
@@ -103,7 +107,10 @@ public class OutboxEventJpaEntity {
         this.lastError = null;
     }
 
-    void markFailed(String error) {
+    void markFailed(String error, Instant at) {
+        if (this.firstFailedAt == null) {
+            this.firstFailedAt = at;
+        }
         this.attempts++;
         this.lastError = error == null ? null : error.substring(0, Math.min(error.length(), MAX_ERROR_LENGTH));
     }

@@ -67,26 +67,37 @@ The relay parks a row it can never send instead of stalling every later
 event: a non-retryable producer error (`RecordTooLargeException`,
 `SerializationException`, `InvalidTopicException`,
 `TopicAuthorizationException`, anything that is not a Kafka
-`RetriableException` or a timeout) parks it at once, and a retriable error
-parks it on its `compliance.outbox.relay.max-attempts`-th failed send
-(`OUTBOX_RELAY_MAX_ATTEMPTS`, default 10). Retriable errors below the cap stop
-the batch and are retried on the next run, as before. Parked rows keep
-`parked_at`, `attempts` and `last_error` and are skipped by the relay. Alert on
-`outbox_parked_events{service="svc-cmp-evidence"} > 0`.
+`RetriableException` or a timeout) parks it at once. A retriable error (broker
+or egress outage, missing topic, timeout) stops the batch and is retried on the
+next run, however many attempts that takes; it parks the row only once the row
+has kept failing for longer than `compliance.outbox.relay.retryable-park-after`
+(`OUTBOX_RELAY_RETRYABLE_PARK_AFTER`, default `PT24H`) since its first failure
+(`first_failed_at`, V8). So an outage of minutes or hours delays events but
+parks none, and nothing needs replaying once it is over.
+`compliance.outbox.relay.max-attempts` (`OUTBOX_RELAY_MAX_ATTEMPTS`, default 10)
+never parks a row: from that many failed sends of one row on, each retry is
+logged at ERROR instead of WARN. Parked rows keep `parked_at`, `first_failed_at`,
+`attempts` and `last_error` and are skipped by the relay.
+
+Alerts: `outbox_parked_events{service="svc-cmp-evidence"} > 0` (rows that need
+a decision), and `outbox_oldest_pending_age_seconds` above a few minutes (the
+relay is stalled on a retriable failure, or off; the backlog is waiting, not
+lost). Two replicas never send the same row: the relay holds a PostgreSQL
+advisory lock for its run (`ComplianceServiceIT.twoRelaysRunningConcurrentlySendEachRowExactlyOnce`).
 
 Replay once the cause is fixed (topic created, ACL granted, payload issue
 resolved). The relay picks the rows up on its next run, in `created_seq` order:
 
 ```sql
 -- inspect
-select event_id, topic, aggregate_id, attempts, last_error, parked_at
+select event_id, topic, aggregate_id, attempts, last_error, first_failed_at, parked_at
 from sc_cmp_evidence.outbox_event
 where parked_at is not null and published_at is null
 order by created_seq;
 
 -- un-park (one event, or drop the event_id condition for all of them)
 update sc_cmp_evidence.outbox_event
-set parked_at = null, attempts = 0, last_error = null
+set parked_at = null, first_failed_at = null, attempts = 0, last_error = null
 where parked_at is not null and published_at is null
   and event_id = '<event id>';
 ```
@@ -107,7 +118,7 @@ parked and record the decision here.
 - [x] Container image, Helm chart, Terraform validate in CI (`Deployability` workflow)
 - [ ] Payment services call this API (follow-up in the payments repositories)
 - [x] Screening events written through a transactional outbox in the screening's transaction; one event per new screening, none on retries or when a concurrent duplicate loses (`ComplianceServiceIT`); screening inputs not published
-- [x] Outbox rows that can never be sent are parked (non-retryable error or attempt cap), skipped, counted by `outbox_parked_events` and replayed by hand (`OutboxRelayTest`, `ComplianceServiceIT`)
+- [x] Outbox rows that can never be sent are parked (non-retryable error at once; retriable errors only after `retryable-park-after`, default 24 h), skipped, counted by `outbox_parked_events` and replayed by hand; backlog age in `outbox_oldest_pending_age_seconds`; one sender at a time (`OutboxRelayTest`, `ComplianceServiceIT`)
 - [ ] AsyncAPI catalog entry (proposed in asyncapi-catalog PR #11, not merged) matches `api/asyncapi/svc-cmp-evidence.yaml` (provider copy changes `screeningId` from `format: uuid` to the `CMP-<uuid>` pattern)
 - [ ] Topic `evt.cmp.compliance.screened.v1` and its DLQ created on the platform cluster; IRSA `msk_cluster_arn` set
 - [ ] Mesh contract lists `msk` for `compliance-evidence-service` (allow-egress-msk generated for namespace `compliance`); until then the chart keeps the relay off

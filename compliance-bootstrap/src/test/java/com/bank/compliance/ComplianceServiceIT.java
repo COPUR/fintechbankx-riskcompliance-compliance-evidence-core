@@ -356,7 +356,7 @@ class ComplianceServiceIT {
         // Manual replay, as in the runbook.
         jdbc.update("""
             update sc_cmp_evidence.outbox_event
-            set parked_at = null, attempts = 0, last_error = null
+            set parked_at = null, first_failed_at = null, attempts = 0, last_error = null
             where parked_at is not null and published_at is null and aggregate_id = ?
             """, parkedScreening);
 
