@@ -195,9 +195,10 @@ class ComplianceServiceIT {
                 jdbc.update("""
                     insert into sc_cmp_evidence.compliance_screening
                         (screening_id, transaction_id, customer_id, amount, currency, sanctions_hit, kyc_verified, pep,
-                         attestation_source, decision, reasons, rule_set_version, checked_at)
+                         attestation_source, attested_by, decision, reasons, rule_set_version, checked_at)
                     values ('CMP-race-winner', 'PAY-RACE', 'C-1', 10.00, 'USD', false, true, false,
-                            'CALLER_ATTESTED', 'PASS', '["COMPLIANT"]'::jsonb, 'cmp-screening-rules-v1', now())
+                            'CALLER_ATTESTED', 'svc-pay-initiation-settlement', 'PASS', '["COMPLIANT"]'::jsonb,
+                            'cmp-screening-rules-v1', now())
                     """);
                 otherInserted.countDown();
                 await(commitOther);
@@ -362,6 +363,47 @@ class ComplianceServiceIT {
         ArgumentCaptor<ProducerRecord<String, String>> records = ArgumentCaptor.forClass(ProducerRecord.class);
         Mockito.verify(kafka, Mockito.times(2)).send(records.capture());
         assertThat(records.getAllValues().getLast().key()).isEqualTo(parkedScreening);
+    }
+
+    @Test
+    void theEvidenceNamesWhoAttestedAndAnotherCallersReplayIsRefused() throws Exception {
+        screen("PAY-ATT-1", "C-1", "10.00", false, true, false)
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.attestation").value("CALLER_ATTESTED"))
+            .andExpect(jsonPath("$.attestedBy").value("svc-pay-initiation-settlement"));
+
+        assertThat(jdbc.queryForMap(
+                "select attestation_source, attested_by from sc_cmp_evidence.compliance_screening where transaction_id = 'PAY-ATT-1'"))
+            .containsEntry("attestation_source", "CALLER_ATTESTED").containsEntry("attested_by", "svc-pay-initiation-settlement");
+
+        // The same facts from a compliance officer are not a replay of the payment service's screening.
+        mvc.perform(post("/api/v1/compliance/screen").with(officer())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body("PAY-ATT-1", "C-1", "10.00", false, true, false)))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("TRANSACTION_ALREADY_SCREENED"));
+        assertThat(outboxRows()).isEqualTo(1);
+    }
+
+    @Test
+    void staffScreeningsAreStaffAttestedUnderTheOfficersSubject() throws Exception {
+        mvc.perform(post("/api/v1/compliance/screen").with(officer())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body("PAY-ATT-2", "C-1", "10.00", false, true, false)))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.attestation").value("STAFF_ATTESTED"))
+            .andExpect(jsonPath("$.attestedBy").value(OFFICER_SUBJECT));
+
+        assertThat(jdbc.queryForMap(
+                "select attestation_source, attested_by from sc_cmp_evidence.compliance_screening where transaction_id = 'PAY-ATT-2'"))
+            .containsEntry("attestation_source", "STAFF_ATTESTED").containsEntry("attested_by", OFFICER_SUBJECT);
+    }
+
+    private static final String OFFICER_SUBJECT = "8d0c6a4e-2f7b-4c1e-9a43-5b2f0d9e7c11";
+
+    private static org.springframework.test.web.servlet.request.RequestPostProcessor officer() {
+        return jwt().jwt(j -> j.subject(OFFICER_SUBJECT).claim("azp", "fintechbankx-web"))
+            .authorities(new SimpleGrantedAuthority("ROLE_COMPLIANCE_OFFICER"));
     }
 
     private int outboxRows() {

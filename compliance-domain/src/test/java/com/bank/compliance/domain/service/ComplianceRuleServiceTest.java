@@ -14,7 +14,7 @@ class ComplianceRuleServiceTest {
 
     @Test
     void shouldFailWhenSanctionsHit() {
-        ComplianceScreeningCommand command = new ComplianceScreeningCommand("TX-1", "C1", new BigDecimal("200"), "AED", true, true, false);
+        ComplianceScreeningCommand command = new ComplianceScreeningCommand("TX-1", "C1", new BigDecimal("200"), "AED", true, true, false, com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS);
 
         var result = service.screen(command);
 
@@ -26,7 +26,7 @@ class ComplianceRuleServiceTest {
 
     @Test
     void shouldFailWhenKycMissing() {
-        ComplianceScreeningCommand command = new ComplianceScreeningCommand("TX-2", "C1", new BigDecimal("200"), "AED", false, false, false);
+        ComplianceScreeningCommand command = new ComplianceScreeningCommand("TX-2", "C1", new BigDecimal("200"), "AED", false, false, false, com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS);
 
         var result = service.screen(command);
 
@@ -36,8 +36,8 @@ class ComplianceRuleServiceTest {
 
     @Test
     void shouldReviewPepHighValueAndPassNormalFlow() {
-        var review = service.screen(new ComplianceScreeningCommand("TX-3", "C1", new BigDecimal("12000"), "AED", false, true, true));
-        var pass = service.screen(new ComplianceScreeningCommand("TX-4", "C1", new BigDecimal("900"), "AED", false, true, false));
+        var review = service.screen(new ComplianceScreeningCommand("TX-3", "C1", new BigDecimal("12000"), "AED", false, true, true, com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS));
+        var pass = service.screen(new ComplianceScreeningCommand("TX-4", "C1", new BigDecimal("900"), "AED", false, true, false, com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS));
 
         assertThat(review.getDecision()).isEqualTo(ComplianceDecision.REVIEW);
         assertThat(pass.getDecision()).isEqualTo(ComplianceDecision.PASS);

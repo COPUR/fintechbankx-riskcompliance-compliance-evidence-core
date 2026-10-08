@@ -48,6 +48,6 @@ class PepHighValueThresholdsTest {
     }
 
     private static ComplianceScreeningCommand command(String currency, String amount) {
-        return new ComplianceScreeningCommand("TX-" + amount, "C1", new BigDecimal(amount), currency, false, true, true);
+        return new ComplianceScreeningCommand("TX-" + amount, "C1", new BigDecimal(amount), currency, false, true, true, com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS);
     }
 }

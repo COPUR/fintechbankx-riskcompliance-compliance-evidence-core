@@ -7,6 +7,13 @@ import com.bank.compliance.domain.ScreeningAlreadyRecordedException;
 import org.springframework.dao.DataIntegrityViolationException;
 import com.bank.compliance.domain.ComplianceResultFixtures;
 import com.bank.compliance.domain.port.in.ComplianceScreeningCommand;
+import com.bank.compliance.domain.Attestation;
+import com.bank.compliance.domain.AttestationSource;
+import com.bank.compliance.infrastructure.config.ServiceCallerPolicy;
+import org.mockito.ArgumentCaptor;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -32,8 +39,11 @@ class ComplianceControllerTest {
     @BeforeEach
     void setUp() {
         service = mock(ComplianceScreeningUseCase.class);
-        mockMvc = MockMvcBuilders.standaloneSetup(new ComplianceController(service))
-                .setControllerAdvice(new ApiExceptionHandler()).build();
+        mockMvc = MockMvcBuilders.standaloneSetup(new ComplianceController(service,
+                        new CallerAttestation(new ServiceCallerPolicy("svc-pay-initiation-settlement"))))
+                .setControllerAdvice(new ApiExceptionHandler())
+                .defaultRequest(get("/").principal(token("svc-pay-initiation-settlement", "svc-pay-initiation-settlement", "SERVICE")))
+                .build();
     }
 
     @Test
@@ -162,6 +172,53 @@ class ComplianceControllerTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.attestation").value("CALLER_ATTESTED"))
                 .andExpect(jsonPath("$.sanctionsHit").doesNotExist());
+    }
+
+    @Test
+    void aListedServiceAttestsAsCallerUnderItsAzp() throws Exception {
+        ComplianceResult result = ComplianceResultFixtures.result("TX-10", "C1", ComplianceDecision.PASS, List.of("COMPLIANT"));
+        when(service.screen(any(ComplianceScreeningCommand.class))).thenReturn(result);
+
+        mockMvc.perform(post("/api/v1/compliance/screen").contentType(MediaType.APPLICATION_JSON).content(body("TX-10", "C1", "10"))
+                        .principal(token("service-account-uuid", "svc-pay-initiation-settlement", "SERVICE")))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.attestedBy").value("svc-pay-initiation-settlement"));
+
+        assertCommandAttestation(Attestation.byService("svc-pay-initiation-settlement"));
+    }
+
+    /**
+     * Staff attest under their token subject (a Keycloak user id), never a
+     * customer_id claim, and their screenings are STAFF_ATTESTED.
+     */
+    @Test
+    void complianceStaffAttestUnderTheirSubject() throws Exception {
+        ComplianceResult result = ComplianceResultFixtures.result("TX-11", "C1", ComplianceDecision.PASS, List.of("COMPLIANT"));
+        when(service.screen(any(ComplianceScreeningCommand.class))).thenReturn(result);
+        String officer = "8d0c6a4e-2f7b-4c1e-9a43-5b2f0d9e7c11";
+
+        mockMvc.perform(post("/api/v1/compliance/screen").contentType(MediaType.APPLICATION_JSON).content(body("TX-11", "C1", "10"))
+                        .principal(token(officer, "fintechbankx-web", "COMPLIANCE_OFFICER")))
+                .andExpect(status().isCreated());
+        assertCommandAttestation(Attestation.byStaff(officer));
+
+        org.mockito.Mockito.clearInvocations(service);
+        mockMvc.perform(post("/api/v1/compliance/screen").contentType(MediaType.APPLICATION_JSON).content(body("TX-12", "C1", "10"))
+                        .principal(token("admin-uuid", "fintechbankx-web", "ADMIN")))
+                .andExpect(status().isCreated());
+        assertCommandAttestation(new Attestation(AttestationSource.STAFF_ATTESTED, "admin-uuid"));
+    }
+
+    private void assertCommandAttestation(Attestation expected) {
+        ArgumentCaptor<ComplianceScreeningCommand> command = ArgumentCaptor.forClass(ComplianceScreeningCommand.class);
+        org.mockito.Mockito.verify(service).screen(command.capture());
+        org.assertj.core.api.Assertions.assertThat(command.getValue().attestation()).isEqualTo(expected);
+    }
+
+    private static JwtAuthenticationToken token(String subject, String azp, String role) {
+        Jwt jwt = Jwt.withTokenValue("t").header("alg", "none").subject(subject).claim("azp", azp)
+                .claim("customer_id", "CUST-should-not-be-used").build();
+        return new JwtAuthenticationToken(jwt, List.of(new SimpleGrantedAuthority("ROLE_" + role)), subject);
     }
 
     private void expectInvalid(String body, String message) throws Exception {

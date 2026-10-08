@@ -15,7 +15,7 @@ class ComplianceResultRehydrateTest {
 
     private static final Instant CHECKED = Instant.parse("2026-01-02T03:04:05Z");
     private static final ScreeningFacts SANCTIONED =
-            ScreeningFacts.callerAttested(new BigDecimal("250.0000"), "AED", true, true, false);
+            new ScreeningFacts(new BigDecimal("250.0000"), "AED", true, true, false, com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS);
 
     @Test
     void rehydrateKeepsTheRecordedDecision() {
@@ -30,6 +30,7 @@ class ComplianceResultRehydrateTest {
         assertThat(stored.getCheckedAt()).isEqualTo(CHECKED);
         assertThat(stored.getFacts()).isEqualTo(SANCTIONED);
         assertThat(stored.getAttestation()).isEqualTo(AttestationSource.CALLER_ATTESTED);
+        assertThat(stored.getAttestedBy()).isEqualTo("svc-pay-initiation-settlement");
         // Evidence keeps the rule set that decided it, even after the rules change.
         assertThat(stored.getRuleSetVersion()).isEqualTo("cmp-screening-rules-v0");
     }
@@ -52,10 +53,28 @@ class ComplianceResultRehydrateTest {
         ComplianceResult result = ComplianceResult.create("TX-3", "42", SANCTIONED, ComplianceDecision.FAIL,
                 List.of("SANCTIONS_HIT"), ComplianceRuleService.RULE_SET_VERSION);
 
-        assertThat(result.isReplayOf("42", ScreeningFacts.callerAttested(new BigDecimal("250"), "AED", true, true, false))).isTrue();
+        assertThat(result.isReplayOf("42", new ScreeningFacts(new BigDecimal("250"), "AED", true, true, false, com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS))).isTrue();
         assertThat(result.isReplayOf("43", SANCTIONED)).isFalse();
         // The same transaction resent without the sanctions hit must not get the stored FAIL back as if it were its answer.
-        assertThat(result.isReplayOf("42", ScreeningFacts.callerAttested(new BigDecimal("250"), "AED", false, true, false))).isFalse();
+        assertThat(result.isReplayOf("42", new ScreeningFacts(new BigDecimal("250"), "AED", false, true, false, com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS))).isFalse();
         assertThat(result.getCheckedAt().getNano() % 1000).isZero();
+    }
+
+    /**
+     * The same facts stated by another caller are not a replay: the evidence
+     * names who attested them, so another caller gets a 409, not this result.
+     */
+    @Test
+    void aReplayMustComeFromTheCallerWhoAttestedTheFacts() {
+        ComplianceResult result = ComplianceResult.create("TX-4", "42", SANCTIONED, ComplianceDecision.FAIL,
+                List.of("SANCTIONS_HIT"), ComplianceRuleService.RULE_SET_VERSION);
+
+        ScreeningFacts sameFactsFromLending = new ScreeningFacts(new BigDecimal("250"), "AED", true, true, false,
+                Attestation.byService("svc-ln-loan-lifecycle"));
+        ScreeningFacts sameFactsFromAnOfficer = new ScreeningFacts(new BigDecimal("250"), "AED", true, true, false,
+                Attestation.byStaff("8d0c6a4e-2f7b-4c1e-9a43-5b2f0d9e7c11"));
+
+        assertThat(result.isReplayOf("42", sameFactsFromLending)).isFalse();
+        assertThat(result.isReplayOf("42", sameFactsFromAnOfficer)).isFalse();
     }
 }

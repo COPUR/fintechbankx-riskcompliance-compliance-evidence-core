@@ -30,7 +30,7 @@ class TransactionalComplianceScreeningTest {
             new TransactionalComplianceScreening(delegate, readWrite, readOnly);
 
     private final ComplianceScreeningCommand command =
-            new ComplianceScreeningCommand("TX-TX", "C-1", new BigDecimal("10.00"), "AED", false, true, false);
+            new ComplianceScreeningCommand("TX-TX", "C-1", new BigDecimal("10.00"), "AED", false, true, false, com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS);
 
     @Test
     void screeningRunsInsideTheReadWriteTransaction() {

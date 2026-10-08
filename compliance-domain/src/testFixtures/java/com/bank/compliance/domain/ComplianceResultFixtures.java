@@ -11,9 +11,12 @@ public final class ComplianceResultFixtures {
     private ComplianceResultFixtures() {
     }
 
-    /** 100.00 AED, no sanctions hit, KYC verified, not a PEP. */
+    /** The payment service's client id: the usual SERVICE caller. */
+    public static final Attestation PAYMENTS = Attestation.byService("svc-pay-initiation-settlement");
+
+    /** 100.00 AED, no sanctions hit, KYC verified, not a PEP, attested by the payment service. */
     public static ScreeningFacts facts() {
-        return ScreeningFacts.callerAttested(new BigDecimal("100.00"), "AED", false, true, false);
+        return new ScreeningFacts(new BigDecimal("100.00"), "AED", false, true, false, PAYMENTS);
     }
 
     public static ComplianceResult result(String transactionId, String customerId,

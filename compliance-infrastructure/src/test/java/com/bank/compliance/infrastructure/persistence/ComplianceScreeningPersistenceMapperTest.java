@@ -31,6 +31,8 @@ class ComplianceScreeningPersistenceMapperTest {
         assertThat(row.isKycVerified()).isTrue();
         assertThat(row.isPep()).isFalse();
         assertThat(row.getAttestationSource()).isEqualTo("CALLER_ATTESTED");
+        assertThat(row.getAttestedBy()).isEqualTo("svc-pay-initiation-settlement");
+        assertThat(loaded.getAttestedBy()).isEqualTo("svc-pay-initiation-settlement");
         assertThat(loaded.getFacts()).isEqualTo(screened.getFacts());
         assertThat(loaded.getRuleSetVersion()).isEqualTo(screened.getRuleSetVersion());
     }

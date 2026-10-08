@@ -11,19 +11,20 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class ScreeningFactsTest {
 
     private static ScreeningFacts facts(String amount, String currency) {
-        return ScreeningFacts.callerAttested(new BigDecimal(amount), currency, false, true, false);
+        return new ScreeningFacts(new BigDecimal(amount), currency, false, true, false, com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS);
     }
 
     @Test
     void callerAttestedFactsRecordTheirSource() {
-        assertThat(facts("100.00", "AED").attestation()).isEqualTo(AttestationSource.CALLER_ATTESTED);
+        assertThat(facts("100.00", "AED").attestation().source()).isEqualTo(AttestationSource.CALLER_ATTESTED);
+        assertThat(facts("100.00", "AED").attestation().attestedBy()).isEqualTo("svc-pay-initiation-settlement");
     }
 
     @Test
     void amountMustBePositive() {
         assertThatThrownBy(() -> facts("0", "AED")).hasMessage("amount must be positive");
         assertThatThrownBy(() -> facts("-0.01", "AED")).hasMessage("amount must be positive");
-        assertThatThrownBy(() -> ScreeningFacts.callerAttested(null, "AED", false, true, false))
+        assertThatThrownBy(() -> new ScreeningFacts(null, "AED", false, true, false, com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS))
                 .hasMessage("amount must be positive");
     }
 
@@ -52,14 +53,14 @@ class ScreeningFactsTest {
 
     @Test
     void sameFactsComparesAmountByValueAndEveryFlag() {
-        ScreeningFacts recorded = ScreeningFacts.callerAttested(new BigDecimal("12000.00"), "AED", false, true, true);
+        ScreeningFacts recorded = new ScreeningFacts(new BigDecimal("12000.00"), "AED", false, true, true, com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS);
 
-        assertThat(recorded.sameFactsAs(ScreeningFacts.callerAttested(new BigDecimal("12000"), "AED", false, true, true))).isTrue();
-        assertThat(recorded.sameFactsAs(ScreeningFacts.callerAttested(new BigDecimal("12000.01"), "AED", false, true, true))).isFalse();
-        assertThat(recorded.sameFactsAs(ScreeningFacts.callerAttested(new BigDecimal("12000"), "USD", false, true, true))).isFalse();
-        assertThat(recorded.sameFactsAs(ScreeningFacts.callerAttested(new BigDecimal("12000"), "AED", true, true, true))).isFalse();
-        assertThat(recorded.sameFactsAs(ScreeningFacts.callerAttested(new BigDecimal("12000"), "AED", false, false, true))).isFalse();
-        assertThat(recorded.sameFactsAs(ScreeningFacts.callerAttested(new BigDecimal("12000"), "AED", false, true, false))).isFalse();
+        assertThat(recorded.sameFactsAs(new ScreeningFacts(new BigDecimal("12000"), "AED", false, true, true, com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS))).isTrue();
+        assertThat(recorded.sameFactsAs(new ScreeningFacts(new BigDecimal("12000.01"), "AED", false, true, true, com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS))).isFalse();
+        assertThat(recorded.sameFactsAs(new ScreeningFacts(new BigDecimal("12000"), "USD", false, true, true, com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS))).isFalse();
+        assertThat(recorded.sameFactsAs(new ScreeningFacts(new BigDecimal("12000"), "AED", true, true, true, com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS))).isFalse();
+        assertThat(recorded.sameFactsAs(new ScreeningFacts(new BigDecimal("12000"), "AED", false, false, true, com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS))).isFalse();
+        assertThat(recorded.sameFactsAs(new ScreeningFacts(new BigDecimal("12000"), "AED", false, true, false, com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS))).isFalse();
         assertThat(recorded.sameFactsAs(null)).isFalse();
     }
 }

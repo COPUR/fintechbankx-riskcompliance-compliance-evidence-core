@@ -21,5 +21,6 @@ class ComplianceScreeningResponseTest {
         assertThat(response.transactionId()).isEqualTo("TX-1");
         assertThat(response.decision()).isEqualTo("REVIEW");
         assertThat(response.attestation()).isEqualTo("CALLER_ATTESTED");
+        assertThat(response.attestedBy()).isEqualTo("svc-pay-initiation-settlement");
     }
 }

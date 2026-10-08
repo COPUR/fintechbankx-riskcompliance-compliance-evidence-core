@@ -42,7 +42,7 @@ class ComplianceScreeningServiceTest {
 
     @Test
     void shouldReturnExistingResultWhenAlreadyScreened() {
-        ComplianceScreeningCommand command = new ComplianceScreeningCommand("TX-1", "C1", new BigDecimal("100"), "AED", false, true, false);
+        ComplianceScreeningCommand command = new ComplianceScreeningCommand("TX-1", "C1", new BigDecimal("100"), "AED", false, true, false, com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS);
         ComplianceResult existing = ComplianceResultFixtures.result("TX-1", "C1", ComplianceDecision.PASS, List.of("COMPLIANT"));
 
         when(repository.findByTransactionId("TX-1")).thenReturn(Optional.of(existing));
@@ -57,7 +57,7 @@ class ComplianceScreeningServiceTest {
 
     @Test
     void shouldEvaluateAndPersistWhenNoExistingResult() {
-        ComplianceScreeningCommand command = new ComplianceScreeningCommand("TX-2", "C1", new BigDecimal("11000"), "AED", false, true, true);
+        ComplianceScreeningCommand command = new ComplianceScreeningCommand("TX-2", "C1", new BigDecimal("11000"), "AED", false, true, true, com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS);
         ComplianceResult evaluated = ComplianceResultFixtures.result("TX-2", "C1", ComplianceDecision.REVIEW, List.of("PEP_HIGH_VALUE_REVIEW"));
 
         when(repository.findByTransactionId("TX-2")).thenReturn(Optional.empty());
@@ -73,7 +73,7 @@ class ComplianceScreeningServiceTest {
 
     @Test
     void newScreeningPublishesOneScreenedEventAfterTheResultIsSaved() {
-        ComplianceScreeningCommand command = new ComplianceScreeningCommand("TX-5", "C7", new BigDecimal("250.00"), "AED", true, true, false);
+        ComplianceScreeningCommand command = new ComplianceScreeningCommand("TX-5", "C7", new BigDecimal("250.00"), "AED", true, true, false, com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS);
         ComplianceResult evaluated = ComplianceResultFixtures.result("TX-5", "C7", ComplianceDecision.FAIL, List.of("SANCTIONS_HIT"));
         when(repository.findByTransactionId("TX-5")).thenReturn(Optional.empty());
         when(ruleService.screen(command)).thenReturn(evaluated);
@@ -94,7 +94,7 @@ class ComplianceScreeningServiceTest {
 
     @Test
     void aFailedSavePublishesNothing() {
-        ComplianceScreeningCommand command = new ComplianceScreeningCommand("TX-6", "C7", new BigDecimal("10.00"), "AED", false, true, false);
+        ComplianceScreeningCommand command = new ComplianceScreeningCommand("TX-6", "C7", new BigDecimal("10.00"), "AED", false, true, false, com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS);
         ComplianceResult evaluated = ComplianceResultFixtures.result("TX-6", "C7", ComplianceDecision.PASS, List.of("COMPLIANT"));
         when(repository.findByTransactionId("TX-6")).thenReturn(Optional.empty());
         when(ruleService.screen(command)).thenReturn(evaluated);
@@ -110,7 +110,7 @@ class ComplianceScreeningServiceTest {
         ComplianceResult existing = ComplianceResultFixtures.result("TX-7", "C1", ComplianceDecision.PASS, List.of("COMPLIANT"));
         when(repository.findByTransactionId("TX-7")).thenReturn(Optional.of(existing));
         ComplianceScreeningCommand sanctionsFlipped =
-                new ComplianceScreeningCommand("TX-7", "C1", new BigDecimal("100"), "AED", true, true, false);
+                new ComplianceScreeningCommand("TX-7", "C1", new BigDecimal("100"), "AED", true, true, false, com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS);
 
         assertThatThrownBy(() -> service.screen(sanctionsFlipped))
                 .isInstanceOf(TransactionAlreadyScreenedException.class)
@@ -125,8 +125,20 @@ class ComplianceScreeningServiceTest {
         ComplianceResult existing = ComplianceResultFixtures.result("TX-8", "C1", ComplianceDecision.PASS, List.of("COMPLIANT"));
         when(repository.findByTransactionId("TX-8")).thenReturn(Optional.of(existing));
 
-        assertThat(service.screen(new ComplianceScreeningCommand("TX-8", "C1", new BigDecimal("100.0000"), "AED", false, true, false)))
+        assertThat(service.screen(new ComplianceScreeningCommand("TX-8", "C1", new BigDecimal("100.0000"), "AED", false, true, false, com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS)))
                 .isSameAs(existing);
+    }
+
+    @Test
+    void theSameFactsFromAnotherCallerAreRefusedNotHandedTheStoredResult() {
+        ComplianceResult existing = ComplianceResultFixtures.result("TX-9", "C1", ComplianceDecision.PASS, List.of("COMPLIANT"));
+        when(repository.findByTransactionId("TX-9")).thenReturn(Optional.of(existing));
+        ComplianceScreeningCommand fromAnAdmin = new ComplianceScreeningCommand("TX-9", "C1", new BigDecimal("100.00"), "AED",
+                false, true, false, com.bank.compliance.domain.Attestation.byStaff("8d0c6a4e-2f7b-4c1e-9a43-5b2f0d9e7c11"));
+
+        assertThatThrownBy(() -> service.screen(fromAnAdmin)).isInstanceOf(TransactionAlreadyScreenedException.class);
+        verify(repository, never()).save(any());
+        verify(eventPublisher, never()).publish(any());
     }
 
     @Test
@@ -139,7 +151,7 @@ class ComplianceScreeningServiceTest {
 
     @Test
     void shouldRefuseAReusedTransactionIdForAnotherCustomer() {
-        ComplianceScreeningCommand command = new ComplianceScreeningCommand("TX-9", "C2", new BigDecimal("100"), "AED", false, true, false);
+        ComplianceScreeningCommand command = new ComplianceScreeningCommand("TX-9", "C2", new BigDecimal("100"), "AED", false, true, false, com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS);
         ComplianceResult existing = ComplianceResultFixtures.result("TX-9", "C1", ComplianceDecision.PASS, List.of("COMPLIANT"));
         when(repository.findByTransactionId("TX-9")).thenReturn(Optional.of(existing));
 

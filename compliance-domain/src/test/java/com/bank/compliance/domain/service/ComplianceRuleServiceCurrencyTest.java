@@ -65,6 +65,6 @@ class ComplianceRuleServiceCurrencyTest {
     private static ComplianceScreeningCommand command(String currency, String amount,
                                                       boolean sanctionsHit, boolean kycVerified, boolean pep) {
         return new ComplianceScreeningCommand("TX-" + currency + "-" + amount, "C1", new BigDecimal(amount), currency,
-                sanctionsHit, kycVerified, pep);
+                sanctionsHit, kycVerified, pep, com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS);
     }
 }

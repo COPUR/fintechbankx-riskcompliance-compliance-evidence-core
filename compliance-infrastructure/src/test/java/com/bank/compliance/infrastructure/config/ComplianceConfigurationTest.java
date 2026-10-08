@@ -39,7 +39,7 @@ class ComplianceConfigurationTest {
         ComplianceScreeningUseCase useCase = configuration.complianceScreeningUseCase(
                 ruleService, new InMemoryComplianceResultRepository(), publisher, transactions);
         ComplianceResult result = useCase.screen(
-                new ComplianceScreeningCommand("TX-CFG", "C-1", new BigDecimal("50.00"), "AED", false, true, false));
+                new ComplianceScreeningCommand("TX-CFG", "C-1", new BigDecimal("50.00"), "AED", false, true, false, com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS));
         useCase.findByTransactionId("TX-CFG");
 
         assertThat(useCase).isInstanceOf(TransactionalComplianceScreening.class);
