@@ -51,7 +51,7 @@ Bu repository, FinTechBankX DDD/EDA dönüşümünde **svc-cmp-evidence** servis
 | Run locally | `SPRING_DATASOURCE_PASSWORD=... ./gradlew :compliance-bootstrap:bootRun` (Kafka on `localhost:9092`, or `OUTBOX_RELAY_ENABLED=false`) |
 | Database migrations | `compliance-infrastructure/src/main/resources/db/migration` (schema `sc_cmp_evidence`) |
 | Container image | `docker build -t compliance-evidence-service .` |
-| Kubernetes | `deploy/helm/compliance-evidence-service` |
+| Kubernetes | `deploy/helm/compliance-evidence-service` (no NetworkPolicy, mesh policy or SecretStore: ingress from payments is owned by the service-mesh repository, mesh #11 128e19d; CI rejects them in the chart) |
 | AWS infrastructure | `deploy/terraform` |
 | Data split from the monolith | [RUNBOOK-EXTRACT-cmp-evidence](docs/migration/RUNBOOK-EXTRACT-cmp-evidence.md) |
 | Deployment and Well-Architected mapping | [DEPLOYMENT_AND_WELL_ARCHITECTED](docs/architecture/DEPLOYMENT_AND_WELL_ARCHITECTED.md) |

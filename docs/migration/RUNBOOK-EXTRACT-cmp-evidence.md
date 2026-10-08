@@ -161,6 +161,7 @@ parked and record the decision here.
 - [x] Screening results readable by compliance officers and auditors; customers cannot screen or read
 - [x] Compliance report backfill rehearsed with reconciliation in CI
 - [x] Container image, Helm chart, Terraform validate in CI (`Deployability` workflow)
+- [x] Ingress from payments, istio-ingress and observability is owned by the service-mesh repository (mesh #11, 128e19d, allow-ingress-from-payments in namespace `compliance`); the chart ships no NetworkPolicy and CI rejects one
 - [ ] Payment services call this API (follow-up in the payments repositories)
 - [x] Screening events written through a transactional outbox in the screening's transaction; one event per new screening, none on retries or when a concurrent duplicate loses (`ComplianceServiceIT`); screening inputs not published
 - [x] Outbox failures per ADR-021 decision 4: payload errors park the row (skipped, counted by `outbox_parked_events`, replayed by hand); any other failure stops the batch without marking the row, backs off and alerts on `outbox_oldest_pending_age_seconds`, never parks; one sender at a time (`OutboxRelayTest`, `ComplianceServiceIT`)

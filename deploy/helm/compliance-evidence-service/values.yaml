@@ -81,16 +81,8 @@ externalSecret:
 topologySpread:
   maxSkew: 1
 
-# CNI backstop (templates/networkpolicy.yaml). Mesh ALLOW rules per caller
-# principal live in the mesh repository (platform contract addendum).
-networkPolicy:
-  enabled: true
-  monitoringNamespace: observability
-  allowedCallers:
-    - namespace: payments            # svc-pay-initiation-settlement
-      podLabels:
-        app: payment-initiation-settlement-service
-    - namespace: istio-ingress       # compliance officers and auditors through the gateway
+# No NetworkPolicy in this chart: ingress (payments, istio-ingress, observability)
+# is owned by the service-mesh repository (mesh #11, 128e19d).
 
 # Strimzi only (SPRING_PROFILES_ACTIVE=kafka-strimzi): maps the client
 # certificate, key and cluster CA from this Secret (keys user.crt, user.key,
