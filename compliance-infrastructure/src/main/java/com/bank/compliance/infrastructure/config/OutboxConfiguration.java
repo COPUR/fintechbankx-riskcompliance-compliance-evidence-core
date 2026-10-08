@@ -54,8 +54,9 @@ public class OutboxConfiguration {
 
     /**
      * How long the oldest unsent event has waited, 0 when none is waiting.
-     * Alert when it grows: retriable failures (a broker or egress outage)
-     * stop the relay without parking anything for up to retryable-park-after.
+     * Measured from created_at. This is the alert signal (ADR-021 decision 4):
+     * a non-payload failure (outage, credentials, ACL) stops the relay without
+     * marking or parking anything, so the backlog ages until it is fixed.
      */
     @Bean
     Gauge outboxOldestPendingAgeGauge(MeterRegistry registry, SpringDataOutboxRepository outbox, Clock clock) {
@@ -69,14 +70,15 @@ public class OutboxConfiguration {
     }
 
     /**
-     * Events the relay gave up on (non-retryable error or the attempt cap).
+     * Events the relay parked: payload errors only (ADR-021 decision 4), or
+     * a manual park by an operator (runbook).
      * Alert when above zero: consumers miss these until they are replayed by
      * hand (runbook, "Parked outbox events").
      */
     @Bean
     Gauge outboxParkedEventsGauge(MeterRegistry registry, SpringDataOutboxRepository outbox) {
         return Gauge.builder(PARKED_GAUGE, outbox, SpringDataOutboxRepository::countByPublishedAtIsNullAndParkedAtIsNotNull)
-            .description("Compliance events the outbox relay parked after a non-retryable error or too many attempts")
+            .description("Compliance events parked after a payload error or by an operator")
             .tag("service", SERVICE_ID)
             .register(registry);
     }
@@ -100,12 +102,11 @@ public class OutboxConfiguration {
                                 @Value("${compliance.outbox.relay.send-timeout:PT35S}") Duration sendTimeout,
                                 @Value("${compliance.outbox.retention:P7D}") Duration retention,
                                 @Value("${compliance.outbox.relay.max-attempts:10}") int maxAttempts,
-                                @Value("${compliance.outbox.relay.retryable-park-after:PT24H}") Duration retryableParkAfter,
                                 @Value("${compliance.outbox.relay.backoff-initial:PT1S}") Duration backoffInitial,
                                 @Value("${compliance.outbox.relay.backoff-max:PT5M}") Duration backoffMax,
                                 MeterRegistry meters) {
             return new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager), clock, batchSize,
-                sendTimeout, retention, maxAttempts, retryableParkAfter, backoffInitial, backoffMax, meters);
+                sendTimeout, retention, maxAttempts, backoffInitial, backoffMax, meters);
         }
 
         @Bean

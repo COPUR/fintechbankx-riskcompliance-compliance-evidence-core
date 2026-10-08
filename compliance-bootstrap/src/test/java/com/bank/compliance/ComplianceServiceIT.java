@@ -312,7 +312,7 @@ class ComplianceServiceIT {
             "select screening_id from sc_cmp_evidence.compliance_screening where transaction_id = 'PAY-RELAY-1'", String.class);
         when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
         OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
-            Clock.systemUTC(), 100, Duration.ofSeconds(5), Duration.ofDays(7), 10, Duration.ofHours(24), Duration.ofSeconds(1), Duration.ofMinutes(5), new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
+            Clock.systemUTC(), 100, Duration.ofSeconds(5), Duration.ofDays(7), 10, Duration.ofSeconds(1), Duration.ofMinutes(5), new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
 
         assertThat(relay.relayOnce()).isEqualTo(1);
 
@@ -349,7 +349,7 @@ class ComplianceServiceIT {
             """, parkedScreening);
         when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
         OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
-            Clock.systemUTC(), 100, Duration.ofSeconds(5), Duration.ofDays(7), 10, Duration.ofHours(24), Duration.ofSeconds(1), Duration.ofMinutes(5), new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
+            Clock.systemUTC(), 100, Duration.ofSeconds(5), Duration.ofDays(7), 10, Duration.ofSeconds(1), Duration.ofMinutes(5), new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
 
         assertThat(relay.relayOnce()).as("only the row behind the parked one").isEqualTo(1);
         assertThat(outbox.countByPublishedAtIsNullAndParkedAtIsNotNull()).isEqualTo(1);
@@ -498,7 +498,7 @@ class ComplianceServiceIT {
 
     private OutboxRelay relay() {
         return new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
-            Clock.systemUTC(), 100, Duration.ofSeconds(15), Duration.ofDays(7), 10, Duration.ofHours(24), Duration.ofSeconds(1), Duration.ofMinutes(5), new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
+            Clock.systemUTC(), 100, Duration.ofSeconds(15), Duration.ofDays(7), 10, Duration.ofSeconds(1), Duration.ofMinutes(5), new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
     }
 
     private int outboxRows() {

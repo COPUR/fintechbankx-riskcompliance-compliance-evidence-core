@@ -44,13 +44,12 @@ class OutboxRelayTest {
     private final KafkaTemplate<String, String> kafka = mock(KafkaTemplate.class);
     private final TransactionTemplate transactions = inlineTransactions();
     private static final int MAX_ATTEMPTS = 10;
-    private static final Duration PARK_AFTER = Duration.ofHours(24);
     private static final Duration BACKOFF_INITIAL = Duration.ofSeconds(1);
     private static final Duration BACKOFF_MAX = Duration.ofMinutes(5);
     private final MutableClock clock = new MutableClock(NOW);
     private final SimpleMeterRegistry meters = new SimpleMeterRegistry();
     private final OutboxRelay relay = new OutboxRelay(outbox, kafka, transactions,
-        clock, 50, Duration.ofSeconds(1), Duration.ofDays(7), MAX_ATTEMPTS, PARK_AFTER, BACKOFF_INITIAL, BACKOFF_MAX, meters);
+        clock, 50, Duration.ofSeconds(1), Duration.ofDays(7), MAX_ATTEMPTS, BACKOFF_INITIAL, BACKOFF_MAX, meters);
 
     @Test
     void anotherReplicaHoldingTheLockMeansNothingIsSent() {

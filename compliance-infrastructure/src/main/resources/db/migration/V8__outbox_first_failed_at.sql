@@ -1,7 +1,5 @@
--- When the relay first failed to send a row. A retriable failure (broker or
--- egress outage, missing topic, timeout) parks a row only once it has kept
--- failing for longer than compliance.outbox.relay.retryable-park-after
--- (default 24 hours) measured from here; non-retriable failures park at once.
--- Un-parking clears it with parked_at (runbook, "Parked outbox events").
+-- When the relay first failed to send a row. Kept for the record; since
+-- ADR-021 decision 4 the relay no longer writes it (a non-payload failure
+-- marks nothing on the row and is never parked). Un-parking may clear it.
 
 ALTER TABLE outbox_event ADD COLUMN first_failed_at TIMESTAMPTZ;

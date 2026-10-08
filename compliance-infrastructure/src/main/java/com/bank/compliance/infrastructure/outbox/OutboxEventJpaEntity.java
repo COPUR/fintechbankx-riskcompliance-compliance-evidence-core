@@ -107,10 +107,8 @@ public class OutboxEventJpaEntity {
         this.lastError = null;
     }
 
-    void markFailed(String error, Instant at) {
-        if (this.firstFailedAt == null) {
-            this.firstFailedAt = at;
-        }
+    /** A payload failure (the row is parked next). first_failed_at (V8) is no longer written. */
+    void markFailed(String error) {
         this.attempts++;
         this.lastError = error == null ? null : error.substring(0, Math.min(error.length(), MAX_ERROR_LENGTH));
     }

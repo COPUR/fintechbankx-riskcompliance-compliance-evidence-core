@@ -1,8 +1,9 @@
--- Outbox rows the relay can never send (a non-retryable producer error such
--- as RecordTooLargeException, SerializationException, InvalidTopicException
--- or TopicAuthorizationException, or compliance.outbox.relay.max-attempts
--- failed sends) are parked instead of holding back every later event.
--- parked_at is set when the relay gives up; last_error (V3) keeps the reason.
+-- Outbox rows whose payload can never be sent (RecordTooLargeException,
+-- SerializationException, InvalidTopicException) are parked instead of
+-- holding back every later event (ADR-021 decision 4). Any other failure
+-- stops the relay without marking the row and is never parked.
+-- parked_at is set when the relay parks a row (or an operator, by hand);
+-- last_error (V3) keeps the reason.
 -- The relay skips parked rows; the outbox.parked.events gauge counts them.
 -- Manual replay clears parked_at (see the runbook, "Parked outbox events").
 

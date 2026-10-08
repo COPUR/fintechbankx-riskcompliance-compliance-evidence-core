@@ -67,36 +67,34 @@ Owners and triggers are Proposed; the owning squads confirm them before step 1.
 
 ### Parked outbox events
 
-The relay parks a row it can never send instead of stalling every later
-event. Only failures caused by the row itself are poison and park it at once:
-`RecordTooLargeException`, `SerializationException`, `InvalidTopicException`.
-Every other failure is about the producer or the cluster, not the row: a
-retriable error or timeout (broker or egress outage, a topic not created yet,
-`UnknownTopicOrPartitionException`), an authentication or authorisation error
-(`SaslAuthenticationException` from an IRSA/STS hiccup,
+Failure handling follows ADR-021 decision 4 (fintechbankx-governance
+adr-runbooks #10, e6dd76a). Payload errors (`RecordTooLargeException`,
+`SerializationException`, `InvalidTopicException`) park the row
+(`parked_at`, `attempts`, `last_error`) and the relay continues with the next
+row. Everything else stops the batch without marking the row or anything after
+it, is retried with backoff and alerts; the relay never parks such rows. That
+covers retriable errors and timeouts (broker or egress outage, a topic not
+created yet, `UnknownTopicOrPartitionException`), authentication and
+authorisation errors (`SaslAuthenticationException` from an IRSA/STS hiccup,
 `TopicAuthorizationException` during an ACL or IAM-policy rollout), an
-unclassified `KafkaException` or any other exception. It stops the batch and is
-retried on the next run, however many attempts that takes; it parks the row
-only once the row has kept failing for longer than
-`compliance.outbox.relay.retryable-park-after`
-(`OUTBOX_RELAY_RETRYABLE_PARK_AFTER`, default `PT24H`) since its first failure
-(`first_failed_at`, V8), and then at most that one row per run. So an outage or
-a credentials problem of minutes or hours delays events but parks none, and
-nothing needs replaying once it is over.
-`compliance.outbox.relay.max-attempts` (`OUTBOX_RELAY_MAX_ATTEMPTS`, default 10)
-never parks a row: from that many failed sends of one row on, each retry is
-logged at ERROR instead of WARN. Parked rows keep `parked_at`, `first_failed_at`,
-`attempts` and `last_error` and are skipped by the relay.
+unclassified `KafkaException` and any other exception. The row keeps
+`attempts` 0 and `last_error` empty; the error is in the log and in
+`outbox_send_failures_total{exception=...}`. `first_failed_at` (V8) is no
+longer written. `compliance.outbox.relay.max-attempts`
+(`OUTBOX_RELAY_MAX_ATTEMPTS`, default 10) never parks a row: from that many
+consecutive stopped runs on, each failure is logged at ERROR instead of WARN.
 
 After a run that stopped on a failure the relay backs off: it waits
 `compliance.outbox.relay.backoff-initial` (`PT1S`), doubling per stopped run up
-to `backoff-max` (`PT5M`), and resets after a run that does not stop.
+to `backoff-max` (`PT5M`), and resets after a run that does not stop. The
+backoff is held in memory by the relay, not on the row.
 
 Alerts route to the owning squad, `squad="compliance"` (Risk and Compliance
 Decisioning Squad). Platform builds one rule per service on these metric names;
 every meter carries the common tags `app` (the chart's service account,
-`compliance-evidence-service`) and `squad`. The chart ships no PrometheusRule;
-add any extra rules to the observability repository's alert catalogue:
+`compliance-evidence-service`) and `squad`. Platform's observability repository
+owns the alert rules; the chart ships no PrometheusRule. The platform alert, by
+expression, and the supporting queries:
 
 ```promql
 # the relay is stalled (outage, credentials, ACL) or off: the backlog waits, it is not lost
@@ -106,7 +104,8 @@ max(outbox_parked_events{app="compliance-evidence-service", squad="compliance"})
 # what is failing, by exception class
 sum by (exception) (rate(outbox_send_failures_total{app="compliance-evidence-service", squad="compliance"}[5m])) > 0
 ```
- Two replicas never send the same row: the relay holds a PostgreSQL
+
+Two replicas never send the same row: the relay holds a PostgreSQL
 advisory lock for its run (`ComplianceServiceIT.twoRelaysRunningConcurrentlySendEachRowExactlyOnce`).
 
 Replay once the cause is fixed (topic created, ACL granted, payload issue
@@ -114,7 +113,7 @@ resolved). The relay picks the rows up on its next run, in `created_seq` order:
 
 ```sql
 -- inspect
-select event_id, topic, aggregate_id, attempts, last_error, first_failed_at, parked_at
+select event_id, topic, aggregate_id, attempts, last_error, parked_at
 from sc_cmp_evidence.outbox_event
 where parked_at is not null and published_at is null
 order by created_seq;
@@ -126,7 +125,29 @@ where parked_at is not null and published_at is null
   and event_id = '<event id>';
 ```
 
-Run it as the migration owner or the runtime role (both may update
+Manual park (operator only, never the relay): a row stuck on a non-payload
+error that the owning squad decides to set aside, for example a topic that
+will not be granted. Record the decision here; the replay above (next to it)
+puts the row back:
+
+```sql
+-- inspect the stuck head of the queue (the error itself is in the relay log)
+select event_id, topic, aggregate_id, created_at
+from sc_cmp_evidence.outbox_event
+where published_at is null and parked_at is null
+order by created_seq
+limit 1;
+
+-- park it by hand
+update sc_cmp_evidence.outbox_event
+set parked_at = now(), last_error = 'manual: <reason>'
+where published_at is null and parked_at is null
+  and event_id = '<event id>';
+
+-- replay it later: the un-park statement above
+```
+
+Run these as the migration owner or the runtime role (both may update
 `outbox_event`). An event whose payload can never be sent (for example too
 large) needs a fix in the service and a new event, not a replay; leave it
 parked and record the decision here.
@@ -142,7 +163,7 @@ parked and record the decision here.
 - [x] Container image, Helm chart, Terraform validate in CI (`Deployability` workflow)
 - [ ] Payment services call this API (follow-up in the payments repositories)
 - [x] Screening events written through a transactional outbox in the screening's transaction; one event per new screening, none on retries or when a concurrent duplicate loses (`ComplianceServiceIT`); screening inputs not published
-- [x] Outbox rows that can never be sent are parked (non-retryable error at once; retriable errors only after `retryable-park-after`, default 24 h), skipped, counted by `outbox_parked_events` and replayed by hand; backlog age in `outbox_oldest_pending_age_seconds`; one sender at a time (`OutboxRelayTest`, `ComplianceServiceIT`)
+- [x] Outbox failures per ADR-021 decision 4: payload errors park the row (skipped, counted by `outbox_parked_events`, replayed by hand); any other failure stops the batch without marking the row, backs off and alerts on `outbox_oldest_pending_age_seconds`, never parks; one sender at a time (`OutboxRelayTest`, `ComplianceServiceIT`)
 - [ ] AsyncAPI catalog entry (proposed in asyncapi-catalog PR #11, not merged) matches `api/asyncapi/svc-cmp-evidence.yaml` (provider copy changes `screeningId` from `format: uuid` to the `CMP-<uuid>` pattern)
 - [ ] Topic `evt.cmp.compliance.screened.v1` created on the platform cluster (producer only, so no DLQ); IRSA `msk_cluster_arn` set
 - [ ] Mesh contract lists `msk` for `compliance-evidence-service` (allow-egress-msk generated for namespace `compliance`); until then the chart keeps the relay off

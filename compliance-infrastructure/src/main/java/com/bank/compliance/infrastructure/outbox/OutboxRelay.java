@@ -21,26 +21,24 @@ import java.util.concurrent.TimeoutException;
  * Relays committed outbox rows to Kafka in insertion order.
  *
  * One replica relays at a time (Postgres advisory lock), so the service can
- * scale out without reordering events. A retriable failure (Kafka's
- * RetriableException, including its TimeoutException, or the relay's own send
- * timeout) stops the batch and is retried on the next run; consumers
- * de-duplicate on eventId, which makes the at-least-once delivery safe.
+ * scale out without reordering events; consumers de-duplicate on eventId,
+ * which makes the at-least-once delivery safe.
  *
- * A row that can never be sent does not hold back every later event: a
- * failure caused by the row itself (RecordTooLargeException,
- * SerializationException, InvalidTopicException) parks it (parked_at) at
- * once and the batch moves on. Every other failure is about the producer or
- * the cluster, not the row: retriable errors and timeouts, authentication
- * and authorisation errors (an IRSA/STS hiccup, an ACL or IAM rollout), an
- * unclassified KafkaException or any other exception. It stops the batch and
- * parks the row only once it has kept failing for longer than
- * retryableParkAfter since its first failure (first_failed_at), so an outage
- * or a credentials problem delays events but parks at most one row per tick. From the
- * maxAttempts-th failed send on, a retriable failure is logged at ERROR
- * instead of WARN; the count never parks a row. Parked rows are skipped, counted by the
- * outbox.parked.events gauge and replayed by hand (runbook). Each screening
- * aggregate has one event, so skipping a parked row reorders no aggregate's
- * events.
+ * Failure handling follows ADR-021 decision 4. A failure caused by the row's
+ * own payload (RecordTooLargeException, SerializationException,
+ * InvalidTopicException) parks that row (parked_at, attempts, last_error) at
+ * once and the batch moves on. Every other failure (retriable errors and
+ * timeouts, authentication and authorisation errors, an unclassified
+ * KafkaException, any other exception) is about the producer or the cluster:
+ * it stops the batch without marking the row or anything after it, is
+ * logged and counted (outbox.send.failures), and is retried with an
+ * in-memory exponential backoff, however long it lasts. Such rows are never
+ * parked; the outbox.oldest.pending.age.seconds gauge (from created_at) is
+ * the alert signal. From the maxAttempts-th consecutive stopped run on the
+ * failure is logged at ERROR instead of WARN. Parked rows are skipped,
+ * counted by the outbox.parked.events gauge and replayed by hand (runbook).
+ * Each screening aggregate has one event, so skipping a parked row reorders
+ * no aggregate's events.
  */
 public class OutboxRelay {
 
@@ -57,7 +55,6 @@ public class OutboxRelay {
     private final Duration sendTimeout;
     private final Duration retention;
     private final int maxAttempts;
-    private final Duration retryableParkAfter;
     private final Duration backoffInitial;
     private final Duration backoffMax;
     private final MeterRegistry meters;
@@ -67,7 +64,7 @@ public class OutboxRelay {
 
     public OutboxRelay(SpringDataOutboxRepository outbox, KafkaTemplate<String, String> kafka,
                        TransactionTemplate transactions, Clock clock, int batchSize,
-                       Duration sendTimeout, Duration retention, int maxAttempts, Duration retryableParkAfter,
+                       Duration sendTimeout, Duration retention, int maxAttempts,
                        Duration backoffInitial, Duration backoffMax, MeterRegistry meters) {
         if (maxAttempts < 1) {
             throw new IllegalArgumentException("maxAttempts must be at least 1");
@@ -80,10 +77,6 @@ public class OutboxRelay {
         this.sendTimeout = sendTimeout;
         this.retention = retention;
         this.maxAttempts = maxAttempts;
-        this.retryableParkAfter = java.util.Objects.requireNonNull(retryableParkAfter, "retryableParkAfter is required");
-        if (retryableParkAfter.isNegative() || retryableParkAfter.isZero()) {
-            throw new IllegalArgumentException("retryableParkAfter must be positive");
-        }
         this.backoffInitial = positive(backoffInitial, "backoffInitial");
         this.backoffMax = positive(backoffMax, "backoffMax");
         if (backoffMax.compareTo(backoffInitial) < 0) {
@@ -126,30 +119,23 @@ public class OutboxRelay {
                     sent++;
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
-                    row.markFailed("interrupted", clock.instant());
                     countFailure(e);
+                    logStopped(row, e);
                     stopped[0] = true;
                     break;
                 } catch (Exception e) {
                     Throwable cause = unwrap(e);
-                    Instant now = clock.instant();
-                    row.markFailed(describe(cause), now);
                     countFailure(cause);
-                    boolean pastCeiling = Duration.between(row.getFirstFailedAt(), now).compareTo(retryableParkAfter) > 0;
-                    if (!isPoison(cause) && !pastCeiling) {
-                        if (row.getAttempts() >= maxAttempts) {
-                            log.error("Outbox relay still cannot publish event {} to {} (attempt {}, failing since {}); will retry",
-                                row.getEventId(), row.getTopic(), row.getAttempts(), row.getFirstFailedAt(), e);
-                        } else {
-                            log.warn("Outbox relay could not publish event {} to {} (attempt {}); will retry",
-                                row.getEventId(), row.getTopic(), row.getAttempts(), e);
-                        }
+                    if (!isPoison(cause)) {
+                        // ADR-021 decision 4: not about the payload. Mark nothing, stop, back off, retry.
+                        logStopped(row, e);
                         stopped[0] = true;
                         break;
                     }
+                    row.markFailed(describe(cause));
                     row.markParked(clock.instant());
-                    log.error("Outbox relay parked event {} for {} after {} attempt(s): {}; replay it by hand (runbook)",
-                        row.getEventId(), row.getTopic(), row.getAttempts(), row.getLastError(), e);
+                    log.error("Outbox relay parked event {} for {}: {}; replay it by hand (runbook)",
+                        row.getEventId(), row.getTopic(), row.getLastError(), e);
                 }
             }
             return sent;
@@ -162,6 +148,16 @@ public class OutboxRelay {
             nextAttemptAt = null;
         }
         return published == null ? 0 : published;
+    }
+
+    /** The row is untouched; the event id and topic identify it (never customer or transaction ids). */
+    private void logStopped(OutboxEventJpaEntity row, Exception e) {
+        if (consecutiveStops + 1 >= maxAttempts) {
+            log.error("Outbox relay still cannot publish event {} to {} ({} consecutive stopped runs); will retry",
+                row.getEventId(), row.getTopic(), consecutiveStops + 1, e);
+        } else {
+            log.warn("Outbox relay could not publish event {} to {}; will retry", row.getEventId(), row.getTopic(), e);
+        }
     }
 
     private Duration backoff(int stops) {
