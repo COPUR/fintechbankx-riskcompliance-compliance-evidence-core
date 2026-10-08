@@ -39,7 +39,8 @@ psql_q -d "$dst_db" -c "CREATE SCHEMA $schema"
 # Flyway placeholders, filled the way Flyway fills them in the service: the
 # runtime role is the connecting role here, so V7 takes its single-user path.
 runtime_role="${PGUSER:-$(id -un)}"
-for migration in "$root"/compliance-infrastructure/src/main/resources/db/migration/V*.sql; do
+# In version order, as Flyway applies them (a plain glob puts V10 before V2).
+find "$root/compliance-infrastructure/src/main/resources/db/migration" -name 'V*.sql' | sort -V | while read -r migration; do
   sed "s/\${runtime_role}/$runtime_role/g" "$migration" \
     | PGOPTIONS="-c search_path=$schema" psql_q -d "$dst_db" -f -
 done
