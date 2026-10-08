@@ -12,12 +12,6 @@ import java.util.List;
 
 final class ComplianceScreeningPersistenceMapper {
 
-    /**
-     * attested_by of rows written before V6, when the caller was not recorded.
-     * Such a row can never be replayed: no caller's attestation equals it.
-     */
-    static final String NOT_RECORDED = "not-recorded-before-v6";
-
     private ComplianceScreeningPersistenceMapper() {
     }
 
@@ -47,7 +41,7 @@ final class ComplianceScreeningPersistenceMapper {
                 row.getCustomerId(),
                 new ScreeningFacts(row.getAmount(), row.getCurrency(), row.isSanctionsHit(), row.isKycVerified(),
                         row.isPep(), new Attestation(AttestationSource.valueOf(row.getAttestationSource()),
-                                row.getAttestedBy() == null ? NOT_RECORDED : row.getAttestedBy())),
+                                row.getAttestedBy())),
                 ComplianceDecision.valueOf(row.getDecision()),
                 row.getReasons() == null ? List.of() : row.getReasons(),
                 row.getRuleSetVersion(),

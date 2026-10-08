@@ -47,8 +47,7 @@ public class ComplianceScreeningJpaEntity {
     @Column(name = "attestation_source", nullable = false, length = 32, updatable = false)
     private String attestationSource;
 
-    /** NULL only for rows written before V6 (caller not recorded); see the mapper. */
-    @Column(name = "attested_by", length = 128, updatable = false)
+    @Column(name = "attested_by", length = 128, nullable = false, updatable = false)
     private String attestedBy;
 
     @Column(name = "rule_set_version", nullable = false, length = 64, updatable = false)

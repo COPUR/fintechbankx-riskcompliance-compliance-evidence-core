@@ -6,7 +6,7 @@ asyncapi: 3.0.0
 id: urn:fintechbankx:asyncapi:svc-cmp-evidence
 info:
   title: svc-cmp-evidence events
-  version: 1.1.0
+  version: 1.0.0
   description: |-
     Event contract for svc-cmp-evidence (repository fintechbankx-riskcompliance-compliance-evidence-core, canonical name fintechbankx-compliance-evidence-service).
 
@@ -14,7 +14,7 @@ info:
 
     Implementation status: the service writes ComplianceScreening.Screened to its transactional outbox (sc_cmp_evidence.outbox_event) in the same transaction as the stored screening evidence, and a relay publishes it. A retried screening of the same transaction returns the stored result and publishes nothing. Delivery is at least once, in insertion order (consumers de-duplicate on eventId). Per ADR-021 decision 4 only an event whose payload cannot be sent is parked (and replayed by hand); any other failure holds back later events until it is fixed, so events can be delayed but are not skipped for broker, network or credential problems.
 
-    Version 1.1.0: reason codes were removed from ComplianceScreenedData. They are restricted data and stay in the synchronous POST response only. No lending consumer reads them from the event, so the topic stays v1 (no v2 topic, no dual-publish); consumers already ignore unknown and absent optional data.
+    This contract is unreleased (not on main, topic not created, catalog PR #11 unmerged), so removing the reason codes before release is an edit to version 1.0.0, not a new version; reason codes are restricted data and stay in the synchronous POST response.
 
     Every message uses the standard envelope (common/event-envelope.yaml). Record key is the aggregateId (the screening id). Topics use cleanup.policy=delete. Adding an optional field is a minor change; any removal, rename or type change is a new major version on a new topic with dual-publish.
   tags:
@@ -82,7 +82,7 @@ components:
       $ref: ./common/event-envelope.yaml#/EventHeaders
     ComplianceScreenedData:
       type: object
-      description: 'Payload of Compliance.ComplianceScreening.Screened.v1. Ids and the decision only; reason codes are not published (since 1.1.0).
+      description: 'Payload of Compliance.ComplianceScreening.Screened.v1. Ids and the decision only; reason codes are not published.
         The inputs to screening (sanctions, PEP and KYC flags, amount) are not published; entitled readers get
         them through the compliance API.'
       properties:
