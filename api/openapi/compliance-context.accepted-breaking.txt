@@ -1,6 +1,8 @@
 # Accepted 2026-10-08 with the role-agent review of PR #13 (fail-closed screening inputs): an omitted sanctionsHit or
 # pep was recorded as a caller-attested false in the insert-only screening evidence and could produce PASS. Both are
 # now required and an omission is a 400. The only SERVICE caller, svc-pay-initiation-settlement, must always send them
-# (relayed to the payments owner). Delete this file in the first PR after this one merges (scripts/ci/oasdiff-breaking.sh enforces it).
+# (relayed to the payments owner). kycVerified is required the same way: parity found payments omits it and an
+# omission was read as false, so every screening failed with KYC_NOT_VERIFIED. Delete this file in the first PR after this one merges (scripts/ci/oasdiff-breaking.sh enforces it).
+POST /api/v1/compliance/screen the request property 'kycVerified' became required
 POST /api/v1/compliance/screen the request property 'pep' became required
 POST /api/v1/compliance/screen the request property 'sanctionsHit' became required

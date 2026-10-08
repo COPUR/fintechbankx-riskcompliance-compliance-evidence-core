@@ -159,7 +159,7 @@ components:
   schemas:
     ComplianceScreeningRequest:
       type: object
-      required: [transactionId, customerId, amount, sanctionsHit, pep]
+      required: [transactionId, customerId, amount, sanctionsHit, kycVerified, pep]
       properties:
         transactionId:
           type: string
@@ -185,6 +185,9 @@ components:
             is a 400 INVALID_REQUEST, never recorded as false.
         kycVerified:
           type: boolean
+          description: >-
+            Caller-attested KYC verification. Required: omitted or null is a
+            400 INVALID_REQUEST, never recorded as false.
         pep:
           type: boolean
           description: >-

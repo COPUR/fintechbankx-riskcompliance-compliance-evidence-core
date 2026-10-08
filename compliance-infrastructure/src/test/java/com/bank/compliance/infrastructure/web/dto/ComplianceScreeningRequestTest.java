@@ -23,6 +23,9 @@ class ComplianceScreeningRequestTest {
                 .isInstanceOf(IllegalArgumentException.class).hasMessage("sanctionsHit is required");
         assertThatThrownBy(() -> new ComplianceScreeningRequest("TX-1", "C-1", BigDecimal.TEN, "USD", false, true, null).toCommand(com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS))
                 .isInstanceOf(IllegalArgumentException.class).hasMessage("pep is required");
+        assertThatThrownBy(() -> new ComplianceScreeningRequest("TX-1", "C-1", BigDecimal.TEN, "USD", false, null, false)
+                .toCommand(com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("kycVerified is required");
     }
 
     @Test
