@@ -69,7 +69,7 @@ class ComplianceControllerTest {
     @Test
     void reusedTransactionIdForAnotherCustomerIsAConflict() throws Exception {
         when(service.screen(any(ComplianceScreeningCommand.class)))
-                .thenThrow(new com.bank.compliance.application.TransactionAlreadyScreenedException("TX-3"));
+                .thenThrow(new com.bank.compliance.domain.TransactionAlreadyScreenedException("TX-3"));
 
         mockMvc.perform(post("/api/v1/compliance/screen")
                         .contentType(MediaType.APPLICATION_JSON)

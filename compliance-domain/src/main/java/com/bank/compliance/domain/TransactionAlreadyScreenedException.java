@@ -1,7 +1,7 @@
-package com.bank.compliance.application;
+package com.bank.compliance.domain;
 
 /**
- * Thrown when a transaction id that was already screened is sent again for a
+ * Domain rule violation: thrown when a transaction id that was already screened is sent again for a
  * different customer or with different screening facts. The recorded result
  * is never replaced.
  */

@@ -1,6 +1,7 @@
 package com.bank.compliance.application;
 
 import com.bank.compliance.domain.ComplianceResult;
+import com.bank.compliance.domain.TransactionAlreadyScreenedException;
 import com.bank.compliance.domain.port.in.ComplianceScreeningCommand;
 import com.bank.compliance.domain.port.in.ComplianceScreeningUseCase;
 import com.bank.compliance.domain.port.out.ComplianceEventPublisher;

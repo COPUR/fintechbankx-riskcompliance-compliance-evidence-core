@@ -1,6 +1,6 @@
 package com.bank.compliance.infrastructure.web;
 
-import com.bank.compliance.application.TransactionAlreadyScreenedException;
+import com.bank.compliance.domain.TransactionAlreadyScreenedException;
 import com.bank.compliance.domain.ScreeningAlreadyRecordedException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
