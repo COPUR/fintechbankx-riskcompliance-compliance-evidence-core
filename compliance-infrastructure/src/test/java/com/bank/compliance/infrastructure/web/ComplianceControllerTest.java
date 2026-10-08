@@ -163,6 +163,18 @@ class ComplianceControllerTest {
         org.mockito.Mockito.verify(service, org.mockito.Mockito.never()).screen(any());
     }
 
+    /** Omitted or null kycVerified must never be read as false (every screening would FAIL KYC_NOT_VERIFIED). */
+    @Test
+    void omittedOrNullKycVerifiedIsA400AndNothingIsScreened() throws Exception {
+        expectInvalid("""
+                {"transactionId":"TX-13","customerId":"C1","amount":10,"currency":"USD","sanctionsHit":false,"pep":false}
+                """, "kycVerified is required");
+        expectInvalid("""
+                {"transactionId":"TX-13","customerId":"C1","amount":10,"currency":"USD","sanctionsHit":false,"kycVerified":null,"pep":false}
+                """, "kycVerified is required");
+        org.mockito.Mockito.verify(service, org.mockito.Mockito.never()).screen(any());
+    }
+
     @Test
     void responseStatesThatTheFactsWereCallerAttested() throws Exception {
         ComplianceResult result = ComplianceResultFixtures.result("TX-8", "C1", ComplianceDecision.PASS, List.of("COMPLIANT"));
