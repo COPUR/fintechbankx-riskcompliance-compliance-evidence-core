@@ -24,6 +24,8 @@ public class OutboxConfiguration {
 
     /** Platform-wide outbox backlog series (Prometheus: outbox_pending_events). */
     static final String PENDING_GAUGE = "outbox.pending.events";
+    /** Rows the relay parked (Prometheus: outbox_parked_events). */
+    static final String PARKED_GAUGE = "outbox.parked.events";
     static final String SERVICE_ID = "svc-cmp-evidence";
 
     @Bean
@@ -42,8 +44,21 @@ public class OutboxConfiguration {
      */
     @Bean
     Gauge outboxPendingEventsGauge(MeterRegistry registry, SpringDataOutboxRepository outbox) {
-        return Gauge.builder(PENDING_GAUGE, outbox, SpringDataOutboxRepository::countByPublishedAtIsNull)
+        return Gauge.builder(PENDING_GAUGE, outbox, SpringDataOutboxRepository::countByPublishedAtIsNullAndParkedAtIsNull)
             .description("Compliance events written to the outbox but not yet published to Kafka")
+            .tag("service", SERVICE_ID)
+            .register(registry);
+    }
+
+    /**
+     * Events the relay gave up on (non-retryable error or the attempt cap).
+     * Alert when above zero: consumers miss these until they are replayed by
+     * hand (runbook, "Parked outbox events").
+     */
+    @Bean
+    Gauge outboxParkedEventsGauge(MeterRegistry registry, SpringDataOutboxRepository outbox) {
+        return Gauge.builder(PARKED_GAUGE, outbox, SpringDataOutboxRepository::countByPublishedAtIsNullAndParkedAtIsNotNull)
+            .description("Compliance events the outbox relay parked after a non-retryable error or too many attempts")
             .tag("service", SERVICE_ID)
             .register(registry);
     }
@@ -65,8 +80,10 @@ public class OutboxConfiguration {
                                 Clock clock,
                                 @Value("${compliance.outbox.relay.batch-size:100}") int batchSize,
                                 @Value("${compliance.outbox.relay.send-timeout:PT35S}") Duration sendTimeout,
-                                @Value("${compliance.outbox.retention:P7D}") Duration retention) {
-            return new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager), clock, batchSize, sendTimeout, retention);
+                                @Value("${compliance.outbox.retention:P7D}") Duration retention,
+                                @Value("${compliance.outbox.relay.max-attempts:10}") int maxAttempts) {
+            return new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager), clock, batchSize,
+                sendTimeout, retention, maxAttempts);
         }
 
         @Bean

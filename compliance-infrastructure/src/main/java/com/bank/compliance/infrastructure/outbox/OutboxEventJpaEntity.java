@@ -18,6 +18,8 @@ import java.util.UUID;
 @Table(name = "outbox_event")
 public class OutboxEventJpaEntity {
 
+    static final int MAX_ERROR_LENGTH = 500;
+
     @Id
     @Column(name = "event_id")
     private UUID eventId;
@@ -52,6 +54,9 @@ public class OutboxEventJpaEntity {
 
     @Column(name = "published_at")
     private Instant publishedAt;
+
+    @Column(name = "parked_at")
+    private Instant parkedAt;
 
     @Column(name = "attempts", nullable = false)
     private int attempts;
@@ -88,6 +93,7 @@ public class OutboxEventJpaEntity {
     public String getTraceparent() { return traceparent; }
     public Instant getOccurredAt() { return occurredAt; }
     public Instant getPublishedAt() { return publishedAt; }
+    public Instant getParkedAt() { return parkedAt; }
     public int getAttempts() { return attempts; }
     public String getLastError() { return lastError; }
 
@@ -99,6 +105,11 @@ public class OutboxEventJpaEntity {
 
     void markFailed(String error) {
         this.attempts++;
-        this.lastError = error == null ? null : error.substring(0, Math.min(error.length(), 512));
+        this.lastError = error == null ? null : error.substring(0, Math.min(error.length(), MAX_ERROR_LENGTH));
+    }
+
+    /** The relay gave up on this row; it stays unpublished until it is un-parked by hand. */
+    void markParked(Instant at) {
+        this.parkedAt = at;
     }
 }

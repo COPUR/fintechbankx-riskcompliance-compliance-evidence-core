@@ -59,6 +59,41 @@ The backfill is independent of the other contexts' backfills and idempotent. `sc
 | 4 | After the next regulatory reporting cycle: drop the monolith table | restore from snapshot |
 | 5 | Once the topics exist: enable the outbox relay (`OUTBOX_RELAY_ENABLED=true`, the chart default); consumers subscribe to `evt.cmp.compliance.screened.v1` | relay off; events stay in the outbox and are sent in order once it is back on |
 
+### Parked outbox events
+
+The relay parks a row it can never send instead of stalling every later
+event: a non-retryable producer error (`RecordTooLargeException`,
+`SerializationException`, `InvalidTopicException`,
+`TopicAuthorizationException`, anything that is not a Kafka
+`RetriableException` or a timeout) parks it at once, and a retriable error
+parks it on its `compliance.outbox.relay.max-attempts`-th failed send
+(`OUTBOX_RELAY_MAX_ATTEMPTS`, default 10). Retriable errors below the cap stop
+the batch and are retried on the next run, as before. Parked rows keep
+`parked_at`, `attempts` and `last_error` and are skipped by the relay. Alert on
+`outbox_parked_events{service="svc-cmp-evidence"} > 0`.
+
+Replay once the cause is fixed (topic created, ACL granted, payload issue
+resolved). The relay picks the rows up on its next run, in `created_seq` order:
+
+```sql
+-- inspect
+select event_id, topic, aggregate_id, attempts, last_error, parked_at
+from sc_cmp_evidence.outbox_event
+where parked_at is not null and published_at is null
+order by created_seq;
+
+-- un-park (one event, or drop the event_id condition for all of them)
+update sc_cmp_evidence.outbox_event
+set parked_at = null, attempts = 0, last_error = null
+where parked_at is not null and published_at is null
+  and event_id = '<event id>';
+```
+
+Run it as the migration owner or the runtime role (both may update
+`outbox_event`). An event whose payload can never be sent (for example too
+large) needs a fix in the service and a new event, not a replay; leave it
+parked and record the decision here.
+
 ## 4. Acceptance checklist
 
 - [x] Service builds and tests standalone (`ci/build`, `ci/test`, including PostgreSQL integration tests)
@@ -70,6 +105,7 @@ The backfill is independent of the other contexts' backfills and idempotent. `sc
 - [x] Container image, Helm chart, Terraform validate in CI (`Deployability` workflow)
 - [ ] Payment services call this API (follow-up in the payments repositories)
 - [x] Screening events written through a transactional outbox in the screening's transaction; one event per new screening, none on retries or when a concurrent duplicate loses (`ComplianceServiceIT`); screening inputs not published
+- [x] Outbox rows that can never be sent are parked (non-retryable error or attempt cap), skipped, counted by `outbox_parked_events` and replayed by hand (`OutboxRelayTest`, `ComplianceServiceIT`)
 - [ ] AsyncAPI catalog mirror updated from `api/asyncapi/svc-cmp-evidence.yaml` (provider copy changes `screeningId` from `format: uuid` to the `CMP-<uuid>` pattern)
 - [ ] Topic `evt.cmp.compliance.screened.v1` and its DLQ created on the platform cluster; IRSA `msk_cluster_arn` set
 - [ ] Report generation and the review/submission workflow moved here (precondition for step 3; today only the history is mirrored)
