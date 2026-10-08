@@ -1,0 +1,2 @@
+# Accepted breaking-change waivers need an owner review.
+api/openapi/*.accepted-breaking.txt @COPUR
