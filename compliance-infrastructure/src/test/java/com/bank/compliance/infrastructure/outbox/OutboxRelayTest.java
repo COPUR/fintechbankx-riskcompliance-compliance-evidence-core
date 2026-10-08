@@ -5,6 +5,7 @@ import org.apache.kafka.common.errors.NotEnoughReplicasException;
 import org.apache.kafka.common.errors.RecordTooLargeException;
 import org.apache.kafka.common.errors.TimeoutException;
 import org.apache.kafka.common.errors.TopicAuthorizationException;
+import org.apache.kafka.common.errors.SaslAuthenticationException;
 import org.apache.kafka.common.errors.SerializationException;
 import org.junit.jupiter.api.Test;
 import org.springframework.kafka.core.KafkaProducerException;
@@ -126,29 +127,82 @@ class OutboxRelayTest {
     }
 
     @Test
-    void failuresThrownBySendItselfAreClassifiedTheSameWay() {
+    void aPoisonPayloadThrownBySendItselfParksThatRowAndTheNextRowIsPublished() {
         OutboxEventJpaEntity unserializable = row("CMP-1");
-        OutboxEventJpaEntity unauthorised = row("CMP-2");
-        OutboxEventJpaEntity next = row("CMP-3");
+        OutboxEventJpaEntity next = row("CMP-2");
         when(outbox.tryRelayLock(anyLong())).thenReturn(true);
-        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(unserializable, unauthorised, next));
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(unserializable, next));
         when(kafka.send(any(ProducerRecord.class)))
             .thenThrow(new SerializationException("cannot serialize"))
-            .thenThrow(new TopicAuthorizationException(Set.of("evt.cmp.compliance.screened.v1")))
             .thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
 
         assertThat(relay.relayOnce()).isEqualTo(1);
 
         assertThat(unserializable.getParkedAt()).isEqualTo(NOW);
-        assertThat(unauthorised.getParkedAt()).isEqualTo(NOW);
-        assertThat(unauthorised.getLastError()).startsWith("TopicAuthorizationException");
         assertThat(next.getPublishedAt()).isEqualTo(NOW);
     }
 
     /**
-     * A broker or egress outage is retriable however long it lasts: the head
-     * row keeps the batch stopped and is never parked by a count of attempts.
+     * An authentication or authorisation failure (an IRSA/STS hiccup, an ACL
+     * or IAM-policy rollout) is about the producer, not the row: it stops the
+     * batch like an outage and parks nothing before the time ceiling.
      */
+    @Test
+    void anAuthenticationFailureStopsTheBatchAndParksNothing() {
+        assertStopsTheBatchWithoutParking(new SaslAuthenticationException("IAM credentials expired"));
+    }
+
+    @Test
+    void anAuthorisationFailureStopsTheBatchAndParksNothing() {
+        assertStopsTheBatchWithoutParking(new TopicAuthorizationException(Set.of("evt.cmp.compliance.screened.v1")));
+    }
+
+    @Test
+    void anUnclassifiedKafkaFailureStopsTheBatchAndParksNothing() {
+        assertStopsTheBatchWithoutParking(new org.apache.kafka.common.KafkaException("Failed to construct kafka producer"));
+    }
+
+    @Test
+    void anyOtherExceptionStopsTheBatchAndParksNothing() {
+        assertStopsTheBatchWithoutParking(new IllegalStateException("Cannot perform operation after producer has been closed"));
+    }
+
+    @Test
+    void anUnknownTopicStopsTheBatchAndParksNothing() {
+        assertStopsTheBatchWithoutParking(new org.apache.kafka.common.errors.UnknownTopicOrPartitionException("not yet created"));
+    }
+
+    @Test
+    void anAuthorisationFailurePastTheCeilingParksTheRow() {
+        OutboxEventJpaEntity stuck = row("CMP-1");
+        stuck.markFailed("TopicAuthorizationException", NOW.minus(PARK_AFTER).minusSeconds(1));
+        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(stuck));
+        when(kafka.send(any(ProducerRecord.class)))
+            .thenReturn(CompletableFuture.failedFuture(new TopicAuthorizationException(Set.of("evt.cmp.compliance.screened.v1"))));
+
+        relay.relayOnce();
+
+        assertThat(stuck.getParkedAt()).isEqualTo(NOW);
+    }
+
+    private void assertStopsTheBatchWithoutParking(Exception failure) {
+        OutboxEventJpaEntity head = row("CMP-1");
+        OutboxEventJpaEntity next = row("CMP-2");
+        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(head, next));
+        when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.failedFuture(failure));
+
+        assertThat(relay.relayOnce()).isZero();
+
+        assertThat(head.getParkedAt()).as("the failing row").isNull();
+        assertThat(head.getAttempts()).isEqualTo(1);
+        assertThat(head.getFirstFailedAt()).isEqualTo(NOW);
+        assertThat(next.getParkedAt()).as("the next row").isNull();
+        assertThat(next.getAttempts()).as("the next row is not tried").isZero();
+        verify(kafka, times(1)).send(any(ProducerRecord.class));
+    }
+
     @Test
     void twentyRetriableFailuresInARowDoNotParkTheRow() {
         OutboxEventJpaEntity head = row("CMP-1");
