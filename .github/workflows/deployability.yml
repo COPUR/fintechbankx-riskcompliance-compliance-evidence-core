@@ -48,10 +48,10 @@ jobs:
           helm template ci "$chart" $args > /dev/null
           helm template ci "$chart" -f "$chart/values-dev.yaml" $args > /dev/null
           rendered="$(helm template ci "$chart" $args)"
-          grep -q "kind: NetworkPolicy" <<<"$rendered"
-          # Platform contract: mesh policy belongs to the service-mesh repo, secrets to the one ClusterSecretStore.
-          if grep -qE "kind: (PeerAuthentication|AuthorizationPolicy|SecretStore)$" <<<"$rendered"; then
-            echo "chart must not ship mesh policies or its own SecretStore" >&2
+          # Platform contract: mesh and network policy belong to the service-mesh repo (ingress from payments:
+          # mesh #11, 128e19d), secrets to the one ClusterSecretStore.
+          if grep -qE "kind: (NetworkPolicy|PeerAuthentication|AuthorizationPolicy|SecretStore)$" <<<"$rendered"; then
+            echo "chart must not ship a NetworkPolicy, mesh policies or its own SecretStore" >&2
             exit 1
           fi
           grep -q "name: aws-secrets-manager" <<<"$rendered"
