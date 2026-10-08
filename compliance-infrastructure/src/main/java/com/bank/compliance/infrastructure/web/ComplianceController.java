@@ -1,7 +1,7 @@
 package com.bank.compliance.infrastructure.web;
 
-import com.bank.compliance.application.dto.ComplianceScreeningRequest;
-import com.bank.compliance.application.dto.ComplianceScreeningResponse;
+import com.bank.compliance.infrastructure.web.dto.ComplianceScreeningRequest;
+import com.bank.compliance.infrastructure.web.dto.ComplianceScreeningResponse;
 import com.bank.compliance.domain.port.in.ComplianceScreeningUseCase;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;

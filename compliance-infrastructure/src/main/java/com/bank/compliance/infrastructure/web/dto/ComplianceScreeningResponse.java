@@ -1,4 +1,4 @@
-package com.bank.compliance.application.dto;
+package com.bank.compliance.infrastructure.web.dto;
 
 import com.bank.compliance.domain.ComplianceResult;
 
