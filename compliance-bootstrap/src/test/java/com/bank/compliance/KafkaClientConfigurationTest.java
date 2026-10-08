@@ -38,6 +38,14 @@ class KafkaClientConfigurationTest {
     }
 
     @Test
+    void producerCanBeConstructedWithTheseTimeouts() throws Exception {
+        Map<String, Object> producer = new java.util.HashMap<>(producerProperties(null));
+        producer.put("bootstrap.servers", "localhost:9092");
+        // Kafka rejects delivery.timeout.ms < linger.ms + request.timeout.ms at construction; no broker is contacted.
+        new org.apache.kafka.clients.producer.KafkaProducer<String, String>(producer).close(java.time.Duration.ZERO);
+    }
+
+    @Test
     void kafkaMskProfileUsesIamOverSaslSsl() throws Exception {
         Map<String, Object> producer = producerProperties("kafka-msk");
 

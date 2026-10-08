@@ -10,10 +10,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class ComplianceScreeningRequestTest {
 
     @Test
-    void currencyDefaultsToAedForCallersThatDoNotSendIt() {
+    void currencyDefaultsToUsdForCallersThatDoNotSendIt() {
         var command = new ComplianceScreeningRequest("TX-1", "C-1", new BigDecimal("10.00"), null, false, true, false).toCommand();
 
-        assertThat(command.currency()).isEqualTo("AED");
+        assertThat(command.currency()).isEqualTo("USD");
         assertThat(command.facts().amount()).isEqualByComparingTo("10.00");
     }
 

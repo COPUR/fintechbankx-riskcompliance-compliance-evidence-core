@@ -7,7 +7,8 @@ import java.math.BigDecimal;
 /**
  * Screening request. The flags and amount are attested by the caller.
  * {@code currency} is optional for callers written before it existed and
- * defaults to AED (the platform's home currency); the domain validates it.
+ * defaults to USD, the monolith's fallback when an amount has no currency
+ * (the home-currency decision is still open); the domain validates it.
  */
 public record ComplianceScreeningRequest(
         String transactionId,
@@ -18,7 +19,7 @@ public record ComplianceScreeningRequest(
         boolean kycVerified,
         boolean pep
 ) {
-    public static final String DEFAULT_CURRENCY = "AED";
+    public static final String DEFAULT_CURRENCY = "USD";
 
     public ComplianceScreeningCommand toCommand() {
         return new ComplianceScreeningCommand(

@@ -167,8 +167,8 @@ components:
         currency:
           type: string
           pattern: '^[A-Z]{3}$'
-          default: AED
-          description: ISO 4217 code of the amount, upper case. Optional; AED when absent.
+          default: USD
+          description: ISO 4217 code of the amount, upper case. Optional; USD (the monolith's fallback) when absent.
         sanctionsHit:
           type: boolean
         kycVerified:

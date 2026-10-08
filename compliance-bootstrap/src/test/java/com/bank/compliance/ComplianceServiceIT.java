@@ -196,7 +196,7 @@ class ComplianceServiceIT {
                     insert into sc_cmp_evidence.compliance_screening
                         (screening_id, transaction_id, customer_id, amount, currency, sanctions_hit, kyc_verified, pep,
                          attestation_source, decision, reasons, rule_set_version, checked_at)
-                    values ('CMP-race-winner', 'PAY-RACE', 'C-1', 10.00, 'AED', false, true, false,
+                    values ('CMP-race-winner', 'PAY-RACE', 'C-1', 10.00, 'USD', false, true, false,
                             'CALLER_ATTESTED', 'PASS', '["COMPLIANT"]'::jsonb, 'cmp-screening-rules-v1', now())
                     """);
                 otherInserted.countDown();
