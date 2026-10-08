@@ -2,7 +2,7 @@ package com.bank.compliance.domain.service;
 
 import com.bank.compliance.domain.ComplianceDecision;
 import com.bank.compliance.domain.ComplianceResult;
-import com.bank.compliance.domain.command.ComplianceScreeningCommand;
+import com.bank.compliance.domain.port.in.ComplianceScreeningCommand;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;

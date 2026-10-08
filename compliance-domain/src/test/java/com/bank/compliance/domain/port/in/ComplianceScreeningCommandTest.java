@@ -1,4 +1,4 @@
-package com.bank.compliance.domain.command;
+package com.bank.compliance.domain.port.in;
 
 import com.bank.compliance.domain.AttestationSource;
 import org.junit.jupiter.api.Test;

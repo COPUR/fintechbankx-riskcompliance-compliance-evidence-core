@@ -4,7 +4,7 @@ import com.bank.compliance.domain.ComplianceDecision;
 import com.bank.compliance.domain.ComplianceResult;
 import com.bank.compliance.domain.ComplianceResultFixtures;
 import com.bank.compliance.domain.ComplianceScreenedEvent;
-import com.bank.compliance.domain.command.ComplianceScreeningCommand;
+import com.bank.compliance.domain.port.in.ComplianceScreeningCommand;
 import com.bank.compliance.domain.port.out.ComplianceEventPublisher;
 import com.bank.compliance.domain.port.out.ComplianceResultRepository;
 import com.bank.compliance.domain.service.ComplianceRuleService;

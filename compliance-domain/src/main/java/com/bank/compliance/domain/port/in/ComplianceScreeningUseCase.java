@@ -1,7 +1,6 @@
 package com.bank.compliance.domain.port.in;
 
 import com.bank.compliance.domain.ComplianceResult;
-import com.bank.compliance.domain.command.ComplianceScreeningCommand;
 
 import java.util.Optional;
 

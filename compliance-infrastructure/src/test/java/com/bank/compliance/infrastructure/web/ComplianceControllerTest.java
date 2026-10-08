@@ -6,7 +6,7 @@ import com.bank.compliance.domain.ComplianceResult;
 import com.bank.compliance.domain.ScreeningAlreadyRecordedException;
 import org.springframework.dao.DataIntegrityViolationException;
 import com.bank.compliance.domain.ComplianceResultFixtures;
-import com.bank.compliance.domain.command.ComplianceScreeningCommand;
+import com.bank.compliance.domain.port.in.ComplianceScreeningCommand;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;

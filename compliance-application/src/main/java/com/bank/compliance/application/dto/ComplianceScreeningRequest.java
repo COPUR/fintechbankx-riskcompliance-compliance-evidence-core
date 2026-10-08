@@ -1,6 +1,6 @@
 package com.bank.compliance.application.dto;
 
-import com.bank.compliance.domain.command.ComplianceScreeningCommand;
+import com.bank.compliance.domain.port.in.ComplianceScreeningCommand;
 
 import java.math.BigDecimal;
 
