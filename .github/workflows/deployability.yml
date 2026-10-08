@@ -34,6 +34,20 @@ jobs:
       - uses: azure/setup-helm@v4
         with:
           version: v3.16.3
+      - name: Install kubeconform
+        shell: bash
+        env:
+          KUBECONFORM_VERSION: v0.6.7
+          # sha256 of kubeconform-linux-amd64.tar.gz, from the release's CHECKSUMS file.
+          KUBECONFORM_SHA256: 95f14e87aa28c09d5941f11bd024c1d02fdc0303ccaa23f61cef67bc92619d73
+        run: |
+          tmpdir="$(mktemp -d)"
+          curl -sSfL -o "$tmpdir/kubeconform.tar.gz" \
+            "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          echo "${KUBECONFORM_SHA256}  $tmpdir/kubeconform.tar.gz" | sha256sum -c -
+          tar -xzf "$tmpdir/kubeconform.tar.gz" -C "$tmpdir" kubeconform
+          sudo install "$tmpdir/kubeconform" /usr/local/bin/kubeconform
+          rm -rf "$tmpdir"
       - name: Lint and render chart
         run: |
           chart=deploy/helm/compliance-evidence-service
@@ -82,6 +96,23 @@ jobs:
           grep -qx "  METRICS_APP: \"$sa\"" <<<"$rendered"
           grep -qx '  METRICS_SQUAD: "compliance"' <<<"$rendered"
           helm template ci "$chart" $args --set kafkaClientTls.enabled=true --set config.SPRING_PROFILES_ACTIVE=kafka-strimzi > /dev/null
+      - name: Strict schema validation of the rendered chart
+        shell: bash
+        run: |
+          set -euo pipefail
+          chart=deploy/helm/compliance-evidence-service
+          args="--set image.repository=ci/compliance-evidence-service --set image.tag=${{ github.sha }}"
+          args="$args --set externalSecret.remoteSecretName=ci/compliance-evidence-service/db-app"
+          args="$args --set externalSecret.migrationSecretName=ci/compliance-evidence-service/db-migration"
+          args="$args --set config.DB_URL=jdbc:postgresql://ci:5432/db --set config.KAFKA_BOOTSTRAP_SERVERS=ci:9098"
+          args="$args --set config.OIDC_ISSUER_URI=https://ci/realms/fintechbankx --set config.OIDC_JWK_SET_URI=https://ci/certs"
+          # Schemas pinned to commits: Kubernetes 1.30 (strict) and the ExternalSecret CRD.
+          k8s='https://raw.githubusercontent.com/yannh/kubernetes-json-schema/39a87cd29966bc0b3434e8cfbc2061782c8cb69a/{{.NormalizedKubernetesVersion}}-standalone{{.StrictSuffix}}/{{.ResourceKind}}{{.KindSuffix}}.json'
+          crds='https://raw.githubusercontent.com/datreeio/CRDs-catalog/63669a570e231d4f1f8396d229a1de512bcf0a34/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+          for values in "" "-f $chart/values-dev.yaml"; do
+            helm template ci "$chart" $values $args \
+              | kubeconform -strict -summary -kubernetes-version 1.30.0 -schema-location "$k8s" -schema-location "$crds"
+          done
 
   terraform:
     name: deploy/terraform
