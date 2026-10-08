@@ -157,7 +157,7 @@ components:
   schemas:
     ComplianceScreeningRequest:
       type: object
-      required: [transactionId, customerId, amount]
+      required: [transactionId, customerId, amount, sanctionsHit, pep]
       properties:
         transactionId:
           type: string
@@ -178,10 +178,16 @@ components:
           description: ISO 4217 code of the amount, upper case. Optional; USD (the monolith's fallback) when absent.
         sanctionsHit:
           type: boolean
+          description: >-
+            Caller-attested sanctions screening hit. Required: omitted or null
+            is a 400 INVALID_REQUEST, never recorded as false.
         kycVerified:
           type: boolean
         pep:
           type: boolean
+          description: >-
+            Caller-attested politically exposed person flag. Required: omitted
+            or null is a 400 INVALID_REQUEST, never recorded as false.
     ComplianceScreeningResponse:
       type: object
       required: [screeningId, transactionId, customerId, decision, reasons, checkedAt]

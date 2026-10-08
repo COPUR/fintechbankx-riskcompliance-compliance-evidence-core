@@ -18,6 +18,14 @@ class ComplianceScreeningRequestTest {
     }
 
     @Test
+    void missingSanctionsOrPepFlagsAreRefusedNotDefaulted() {
+        assertThatThrownBy(() -> new ComplianceScreeningRequest("TX-1", "C-1", BigDecimal.TEN, "USD", null, true, false).toCommand())
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("sanctionsHit is required");
+        assertThatThrownBy(() -> new ComplianceScreeningRequest("TX-1", "C-1", BigDecimal.TEN, "USD", false, true, null).toCommand())
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("pep is required");
+    }
+
+    @Test
     void anExplicitCurrencyIsKeptAndValidatedByTheDomain() {
         assertThat(new ComplianceScreeningRequest("TX-1", "C-1", BigDecimal.TEN, "USD", false, true, false).toCommand().currency())
                 .isEqualTo("USD");
