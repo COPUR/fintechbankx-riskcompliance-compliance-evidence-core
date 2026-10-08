@@ -12,3 +12,6 @@ build/
 **/.terraform.lock.hcl
 *.tfstate
 *.tfstate.*
+
+# npm (scripts/ci/asyncapi)
+node_modules/
