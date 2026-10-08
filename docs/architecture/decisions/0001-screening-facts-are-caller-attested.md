@@ -43,8 +43,12 @@ stated. Evidence that hides this would overstate what compliance checked.
 
 ## Follow-ups
 
-- Resolve KYC status from `svc-cus-profile-kyc` (its published API or
-  `evt.cus.customer.*` events) instead of the caller's `kycVerified`.
+- Resolve KYC status from `svc-cus-profile-kyc` instead of the caller's
+  `kycVerified`, through the customer context's published language
+  (customer PR #13): `GET /api/v1/customers/{id}/kyc-status` for the
+  screening-time read, and the event `Customer.Customer.KycStatusChanged.v1`
+  on `evt.cus.customer.kyc-status-changed.v1` to keep a local read model
+  current. Both are Proposed until that PR merges.
 - Run sanctions and PEP lookups in compliance (list provider to be chosen by
   the squad and Group Compliance).
 - Confirm the per-currency PEP high-value thresholds (see the note below).

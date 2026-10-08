@@ -61,7 +61,7 @@ The backfill is independent of the other contexts' backfills and idempotent. `sc
 | 2 | Payments call `POST /api/v1/compliance/screen` with the payment id as `transactionId` and a client-credentials token (`SERVICE` role), behind a flag | payments squad, with the compliance squad | screening 5xx rate above 1 % over 5 min, p99 above 2 s, or any 400 caused by a missing field | flag off; payments keep their local checks  |
 | 3 | **Only when** report generation and the review/submission workflow run in `svc-cmp-evidence` (not yet built) **and** the report-file plan above is done: monolith stops writing `compliance_reports`; run the backfill a last time. Until then the monolith stays the writer and the backfill keeps re-running as a mirror | compliance squad, with the monolith owner | last backfill does not reconcile, or a report written in the monolith after the stop | monolith table is still intact  |
 | 4 | After the next regulatory reporting cycle: drop the monolith table | monolith owner, compliance squad sign-off | any open regulator query on the period, or a reconciliation gap found afterwards | restore from snapshot  |
-| 5 | Preconditions: the mesh contract lists `msk` for `compliance-evidence-service` (allow-egress-msk generated for namespace `compliance`); topic `evt.cmp.compliance.screened.v1` exists on MSK (no DLQ: this service consumes nothing); `msk_cluster_arn` is set. Then turn the relay on with `--set-string config.OUTBOX_RELAY_ENABLED=true` (or in the environment's values file); watch `outbox_pending_events` drain and `outbox_parked_events` stay 0; consumers subscribe to `evt.cmp.compliance.screened.v1` | compliance squad, platform (mesh, MSK) | `outbox_parked_events` > 0, or `outbox_oldest_pending_age_seconds` above 300 s for 10 min | set it back to `"false"`; events stay in the outbox and are sent in order once it is back on  |
+| 5 | Preconditions: the mesh contract lists `msk` for `compliance-evidence-service` (allow-egress-msk generated for namespace `compliance`); topic `evt.cmp.compliance.screened.v1` exists on MSK (no DLQ: this service consumes nothing); `msk_cluster_arn` is set. Then turn the relay on with `--set-string config.OUTBOX_RELAY_ENABLED=true` (or in the environment's values file); watch `outbox_pending_events` drain and `outbox_parked_events` stay 0; consumers subscribe to `evt.cmp.compliance.screened.v1` | compliance squad, platform (mesh, MSK) | `outbox_parked_events` > 0, or `outbox_oldest_pending_age_seconds` above the alert threshold (900 s for 5 min, see "Parked outbox events") | set it back to `"false"`; events stay in the outbox and are sent in order once it is back on  |
 
 Owners and triggers are Proposed; the owning squads confirm them before step 1.
 
@@ -89,6 +89,14 @@ After a run that stopped on a failure the relay backs off: it waits
 to `backoff-max` (`PT5M`), and resets after a run that does not stop. The
 backoff is held in memory by the relay, not on the row.
 
+The backoff and the ERROR escalation are per replica (accepted, Proposed):
+the advisory lock lets one replica send at a time, but each replica keeps
+its own backoff, so with N replicas a stalled cluster is retried up to N
+times as often as configured and `max-attempts` counts stopped runs per pod.
+With the chart's 3 replicas and `backoff-max` 5 min that is about one try
+every 100 s. A cluster-wide backoff (next-attempt time in a relay state
+row) is the alternative if retry load matters.
+
 Alerts (PROPOSED to platform observability,
 fintechbankx-platform-observability-sre-operations; no such rule exists there
 yet, on main or in PR #11). Platform owns the rules; the chart ships no
@@ -98,6 +106,8 @@ scraped from the pod label `fintechbankx.io/service-id` (the chart sets
 `compliance` (Risk and Compliance Decisioning Squad).
 
 ```promql
+# One threshold, used by this rule and by the cut-over rollback trigger: 900 s,
+# three times backoff-max (5 min), so a single maximum backoff never fires it.
 # Proposed rule: the relay is stalled (outage, credentials, ACL) or off; the backlog waits, it is not lost.
 # for: 5m, severity: critical, squad: compliance
 max(outbox_oldest_pending_age_seconds{service_id="svc-cmp-evidence"}) > 900
