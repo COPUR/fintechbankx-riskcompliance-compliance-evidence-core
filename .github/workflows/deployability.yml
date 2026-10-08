@@ -56,6 +56,9 @@ jobs:
           fi
           grep -q "name: aws-secrets-manager" <<<"$rendered"
           grep -q "app: compliance-evidence-service" <<<"$rendered"
+          # The relay stays off until the mesh contract gives this namespace MSK egress (runbook step 1).
+          grep -q 'OUTBOX_RELAY_ENABLED: "false"' <<<"$rendered"
+          helm template ci "$chart" $args --set-string config.OUTBOX_RELAY_ENABLED=true | grep -q 'OUTBOX_RELAY_ENABLED: "true"'
           helm template ci "$chart" $args --set kafkaClientTls.enabled=true --set config.SPRING_PROFILES_ACTIVE=kafka-strimzi > /dev/null
 
   terraform:
