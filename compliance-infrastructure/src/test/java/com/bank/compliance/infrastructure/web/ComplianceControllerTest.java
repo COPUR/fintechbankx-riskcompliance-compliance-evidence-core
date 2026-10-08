@@ -1,6 +1,6 @@
 package com.bank.compliance.infrastructure.web;
 
-import com.bank.compliance.application.ComplianceScreeningService;
+import com.bank.compliance.domain.port.in.ComplianceScreeningUseCase;
 import com.bank.compliance.domain.ComplianceDecision;
 import com.bank.compliance.domain.ComplianceResult;
 import com.bank.compliance.domain.command.ComplianceScreeningCommand;
@@ -23,12 +23,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 class ComplianceControllerTest {
 
-    private ComplianceScreeningService service;
+    private ComplianceScreeningUseCase service;
     private MockMvc mockMvc;
 
     @BeforeEach
     void setUp() {
-        service = mock(ComplianceScreeningService.class);
+        service = mock(ComplianceScreeningUseCase.class);
         mockMvc = MockMvcBuilders.standaloneSetup(new ComplianceController(service))
                 .setControllerAdvice(new ApiExceptionHandler()).build();
     }

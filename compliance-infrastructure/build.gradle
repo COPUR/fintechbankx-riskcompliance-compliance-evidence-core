@@ -1,6 +1,6 @@
 apply plugin: 'jacoco'
 
-description = 'Compliance Infrastructure - Web and persistence adapters for compliance context'
+description = 'Compliance Infrastructure - Web, persistence and outbox adapters for compliance context'
 
 dependencies {
     implementation project(':compliance-domain')
@@ -18,6 +18,10 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-security'
     implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
 
+    // Messaging (transactional outbox relay to Kafka) and metrics
+    implementation 'org.springframework.kafka:spring-kafka'
+    implementation 'io.micrometer:micrometer-core'
+
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.springframework.security:spring-security-test'
 }
@@ -30,6 +34,9 @@ jacoco {
 // integration tests against Postgres; this module gates the unit-testable code.
 def complianceInfrastructureCoverageIncludes = [
     'com/bank/compliance/infrastructure/config/ComplianceConfiguration*',
+    'com/bank/compliance/infrastructure/config/OutboxConfiguration*',
+    'com/bank/compliance/infrastructure/config/TransactionalComplianceScreening*',
+    'com/bank/compliance/infrastructure/outbox/**',
     'com/bank/compliance/infrastructure/persistence/InMemoryComplianceResultRepository*',
     'com/bank/compliance/infrastructure/persistence/ComplianceScreeningPersistenceMapper*',
     'com/bank/compliance/infrastructure/web/**'

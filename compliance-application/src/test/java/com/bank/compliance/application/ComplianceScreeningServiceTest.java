@@ -2,11 +2,15 @@ package com.bank.compliance.application;
 
 import com.bank.compliance.domain.ComplianceDecision;
 import com.bank.compliance.domain.ComplianceResult;
+import com.bank.compliance.domain.ComplianceScreenedEvent;
 import com.bank.compliance.domain.command.ComplianceScreeningCommand;
+import com.bank.compliance.domain.port.out.ComplianceEventPublisher;
 import com.bank.compliance.domain.port.out.ComplianceResultRepository;
 import com.bank.compliance.domain.service.ComplianceRuleService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -28,6 +32,9 @@ class ComplianceScreeningServiceTest {
     @Mock
     private ComplianceResultRepository repository;
 
+    @Mock
+    private ComplianceEventPublisher eventPublisher;
+
     @InjectMocks
     private ComplianceScreeningService service;
 
@@ -43,6 +50,7 @@ class ComplianceScreeningServiceTest {
         assertThat(result).isEqualTo(existing);
         verify(ruleService, never()).screen(any());
         verify(repository, never()).save(any());
+        verify(eventPublisher, never()).publish(any());
     }
 
     @Test
@@ -59,6 +67,39 @@ class ComplianceScreeningServiceTest {
         assertThat(result).isEqualTo(evaluated);
         verify(ruleService).screen(command);
         verify(repository).save(evaluated);
+    }
+
+    @Test
+    void newScreeningPublishesOneScreenedEventAfterTheResultIsSaved() {
+        ComplianceScreeningCommand command = new ComplianceScreeningCommand("TX-5", "C7", new BigDecimal("250.00"), true, true, false);
+        ComplianceResult evaluated = ComplianceResult.create("TX-5", "C7", ComplianceDecision.FAIL, List.of("SANCTIONS_HIT"));
+        when(repository.findByTransactionId("TX-5")).thenReturn(Optional.empty());
+        when(ruleService.screen(command)).thenReturn(evaluated);
+        when(repository.save(evaluated)).thenReturn(evaluated);
+
+        service.screen(command);
+
+        InOrder order = inOrder(repository, eventPublisher);
+        order.verify(repository).save(evaluated);
+        ArgumentCaptor<ComplianceScreenedEvent> published = ArgumentCaptor.forClass(ComplianceScreenedEvent.class);
+        order.verify(eventPublisher).publish(published.capture());
+        verifyNoMoreInteractions(eventPublisher);
+        assertThat(published.getValue().screeningId()).isEqualTo(evaluated.getId());
+        assertThat(published.getValue().transactionId()).isEqualTo("TX-5");
+        assertThat(published.getValue().decision()).isEqualTo(ComplianceDecision.FAIL);
+        assertThat(published.getValue().reasons()).containsExactly("SANCTIONS_HIT");
+    }
+
+    @Test
+    void aFailedSavePublishesNothing() {
+        ComplianceScreeningCommand command = new ComplianceScreeningCommand("TX-6", "C7", new BigDecimal("10.00"), false, true, false);
+        ComplianceResult evaluated = ComplianceResult.create("TX-6", "C7", ComplianceDecision.PASS, List.of("COMPLIANT"));
+        when(repository.findByTransactionId("TX-6")).thenReturn(Optional.empty());
+        when(ruleService.screen(command)).thenReturn(evaluated);
+        when(repository.save(evaluated)).thenThrow(new IllegalStateException("unique transaction_id"));
+
+        assertThatThrownBy(() -> service.screen(command)).isInstanceOf(IllegalStateException.class);
+        verify(eventPublisher, never()).publish(any());
     }
 
     @Test
@@ -79,5 +120,6 @@ class ComplianceScreeningServiceTest {
                 .isInstanceOf(TransactionAlreadyScreenedException.class)
                 .hasMessageContaining("TX-9");
         verify(repository, never()).save(any());
+        verify(eventPublisher, never()).publish(any());
     }
 }

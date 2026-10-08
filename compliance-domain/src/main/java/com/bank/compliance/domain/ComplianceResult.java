@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Objects;
+import java.util.UUID;
 
 public final class ComplianceResult {
     private final ComplianceResultId id;
@@ -75,6 +76,15 @@ public final class ComplianceResult {
      */
     public boolean isFor(String otherCustomerId) {
         return customerId.equals(otherCustomerId);
+    }
+
+    /**
+     * The fact that this screening was made, for publication after the result
+     * is first stored. The event occurred when the screening was checked.
+     */
+    public ComplianceScreenedEvent screenedEvent() {
+        return new ComplianceScreenedEvent(UUID.randomUUID(), checkedAt, id, transactionId, customerId,
+                decision, reasons, checkedAt);
     }
 
     public ComplianceResultId getId() {

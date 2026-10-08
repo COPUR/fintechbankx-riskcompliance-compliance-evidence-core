@@ -1,0 +1,181 @@
+# AsyncAPI contract for svc-cmp-evidence.
+# Status: Proposed. This is the provider copy (source of truth); fintechbankx-governance-api-contracts-asyncapi-catalog mirrors it.
+# Naming: docs/NAMING_CONVENTION_DDD_EDA_BUSINESS_CONTEXT.md
+# Validate: npx -y @asyncapi/cli@2.13.0 validate api/asyncapi/svc-cmp-evidence.yaml
+asyncapi: 3.0.0
+id: urn:fintechbankx:asyncapi:svc-cmp-evidence
+info:
+  title: svc-cmp-evidence events
+  version: 1.0.0
+  description: |-
+    Event contract for svc-cmp-evidence (repository fintechbankx-riskcompliance-compliance-evidence-core, canonical name fintechbankx-compliance-evidence-service).
+
+    Status: Proposed. Owner: Risk and Compliance Decisioning Squad, Lending and Money Movement Tribe. Event namespace: `evt.cmp.compliance`.
+
+    Implementation status: the service writes ComplianceScreening.Screened to its transactional outbox (sc_cmp_evidence.outbox_event) in the same transaction as the stored screening evidence, and a relay publishes it. A retried screening of the same transaction returns the stored result and publishes nothing.
+
+    Every message uses the standard envelope (common/event-envelope.yaml). Record key is the aggregateId (the screening id). Topics use cleanup.policy=delete. Adding an optional field is a minor change; any removal, rename or type change is a new major version on a new topic with dual-publish.
+  tags:
+  - name: compliance
+  - name: evt.cmp.compliance
+  x-service-id: svc-cmp-evidence
+  x-event-namespace: evt.cmp.compliance
+  x-owning-squad: Risk and Compliance Decisioning Squad
+defaultContentType: application/json
+servers:
+  kafka:
+    host: '{bootstrapServers}'
+    protocol: kafka-secure
+    description: FinTechBankX event platform cluster (svc-evt-streaming). mTLS required.
+    variables:
+      bootstrapServers:
+        description: Bootstrap servers, injected per environment by the platform.
+    security:
+    - $ref: '#/components/securitySchemes/mtls'
+channels:
+  screened:
+    address: evt.cmp.compliance.screened.v1
+    title: evt.cmp.compliance.screened.v1
+    description: Compliance.ComplianceScreening.Screened.v1. A transaction was screened and its result stored as
+      evidence.
+    messages:
+      ComplianceScreened:
+        $ref: '#/components/messages/ComplianceScreened'
+    bindings:
+      kafka:
+        topic: evt.cmp.compliance.screened.v1
+        partitions: 3
+        replicas: 3
+        topicConfiguration:
+          cleanup.policy:
+          - delete
+          retention.ms: 604800000
+          max.message.bytes: 1048576
+        bindingVersion: 0.5.0
+  deadLetter:
+    address: evt.cmp.compliance.dlq.v1
+    title: evt.cmp.compliance.dlq.v1
+    description: Dead-letter topic for the evt.cmp.compliance namespace. Written by consumers (not by svc-cmp-evidence)
+      after bounded retries; replayed by the owning consumer squad.
+    messages:
+      DeadLetter:
+        $ref: '#/components/messages/DeadLetter'
+    bindings:
+      kafka:
+        topic: evt.cmp.compliance.dlq.v1
+        partitions: 3
+        replicas: 3
+        topicConfiguration:
+          cleanup.policy:
+          - delete
+          retention.ms: 1209600000
+          max.message.bytes: 1048576
+        bindingVersion: 0.5.0
+operations:
+  publishComplianceScreened:
+    action: send
+    title: Publish Compliance.ComplianceScreening.Screened.v1
+    summary: svc-cmp-evidence publishes Compliance.ComplianceScreening.Screened.v1 through its transactional outbox.
+    channel:
+      $ref: '#/channels/screened'
+    messages:
+    - $ref: '#/channels/screened/messages/ComplianceScreened'
+components:
+  schemas:
+    EventEnvelope:
+      $ref: ./common/event-envelope.yaml#/EventEnvelope
+    EventHeaders:
+      $ref: ./common/event-envelope.yaml#/EventHeaders
+    DeadLetterHeaders:
+      $ref: ./common/event-envelope.yaml#/DeadLetterHeaders
+    ComplianceScreenedData:
+      type: object
+      description: 'Payload of Compliance.ComplianceScreening.Screened.v1. Ids, the decision and reason codes only.
+        The inputs to screening (sanctions, PEP and KYC flags, amount) are not published; entitled readers get
+        them through the compliance API.'
+      properties:
+        screeningId:
+          type: string
+          pattern: '^CMP-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          examples:
+          - CMP-0b9d1c5e-3f4a-4d8e-9a71-2c6f0e5b7d10
+          description: Screening id, `CMP-` followed by a UUID (same as aggregateId).
+        transactionId:
+          type: string
+          minLength: 1
+          description: Id of the screened transaction, as given by the caller.
+        customerId:
+          type: string
+          minLength: 1
+          description: Customer id (an identifier, not personal data).
+        decision:
+          type: string
+          enum:
+          - PASS
+          - REVIEW
+          - FAIL
+          description: Screening decision of record.
+        reasons:
+          type: array
+          description: 'Rule reason codes, for example SANCTIONS_HIT, KYC_NOT_VERIFIED, PEP_HIGH_VALUE_REVIEW,
+            COMPLIANT. Restricted data: consumers must be entitled to read it. Consumers must accept codes they
+            do not know.'
+          items:
+            type: string
+            pattern: '^[A-Z][A-Z0-9_]*$'
+        checkedAt:
+          type: string
+          format: date-time
+          description: When the screening was made (UTC).
+      required:
+      - screeningId
+      - transactionId
+      - customerId
+      - decision
+      - reasons
+      - checkedAt
+  messages:
+    ComplianceScreened:
+      name: ComplianceScreened
+      title: Compliance.ComplianceScreening.Screened.v1
+      summary: A transaction was screened and its result stored as evidence.
+      contentType: application/json
+      headers:
+        $ref: '#/components/schemas/EventHeaders'
+      payload:
+        allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType:
+              const: Compliance.ComplianceScreening.Screened.v1
+            producer:
+              const: svc-cmp-evidence
+            data:
+              $ref: '#/components/schemas/ComplianceScreenedData'
+      bindings:
+        kafka:
+          key:
+            type: string
+            description: aggregateId (screeningId).
+          bindingVersion: 0.5.0
+      x-source-class: com.bank.compliance.domain.ComplianceScreenedEvent
+    DeadLetter:
+      name: DeadLetter
+      title: Dead letter for evt.cmp.compliance
+      summary: A message from this namespace that a consumer could not process after bounded retries.
+      contentType: application/json
+      headers:
+        $ref: '#/components/schemas/DeadLetterHeaders'
+      payload:
+        $ref: '#/components/schemas/EventEnvelope'
+      bindings:
+        kafka:
+          key:
+            type: string
+            description: Original record key (aggregateId).
+          bindingVersion: 0.5.0
+  securitySchemes:
+    mtls:
+      type: X509
+      description: Mutual TLS with platform-issued client certificates.

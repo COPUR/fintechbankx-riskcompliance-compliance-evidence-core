@@ -48,7 +48,7 @@ Bu repository, FinTechBankX DDD/EDA dönüşümünde **svc-cmp-evidence** servis
 | What | Command / path |
 |---|---|
 | Unit and integration tests | `./gradlew test` (integration tests need `TEST_DB_URL` or Docker) |
-| Run locally | `SPRING_DATASOURCE_PASSWORD=... ./gradlew :compliance-bootstrap:bootRun` |
+| Run locally | `SPRING_DATASOURCE_PASSWORD=... ./gradlew :compliance-bootstrap:bootRun` (Kafka on `localhost:9092`, or `OUTBOX_RELAY_ENABLED=false`) |
 | Database migrations | `compliance-infrastructure/src/main/resources/db/migration` (schema `sc_cmp_evidence`) |
 | Container image | `docker build -t compliance-evidence-service .` |
 | Kubernetes | `deploy/helm/compliance-evidence-service` |
@@ -56,7 +56,17 @@ Bu repository, FinTechBankX DDD/EDA dönüşümünde **svc-cmp-evidence** servis
 | Data split from the monolith | [RUNBOOK-EXTRACT-cmp-evidence](docs/migration/RUNBOOK-EXTRACT-cmp-evidence.md) |
 | Deployment and Well-Architected mapping | [DEPLOYMENT_AND_WELL_ARCHITECTED](docs/architecture/DEPLOYMENT_AND_WELL_ARCHITECTED.md) |
 
-Module layout: `compliance-domain` (screening result, rules, ports) ← `compliance-application` (use case) ← `compliance-infrastructure` (JPA, web, security) ← `compliance-bootstrap` (Spring Boot app).
+Module layout: `compliance-domain` (screening result, rules, events, ports) ← `compliance-application` (use case) ← `compliance-infrastructure` (JPA, transactional outbox, web, security) ← `compliance-bootstrap` (Spring Boot app).
+
+### Published events
+
+Contract: [`api/asyncapi/svc-cmp-evidence.yaml`](api/asyncapi/svc-cmp-evidence.yaml) (provider copy; the AsyncAPI catalog mirrors it). Status: Proposed.
+
+| published_events | Event type | Key | When |
+|---|---|---|---|
+| `evt.cmp.compliance.screened.v1` | `Compliance.ComplianceScreening.Screened.v1` | screening id (`CMP-<uuid>`) | a transaction is screened for the first time; a retry returns the stored result and publishes nothing |
+
+Events go through a transactional outbox (`sc_cmp_evidence.outbox_event`, written in the same database transaction as the screening) and are relayed to Kafka (Amazon MSK, IAM auth) by `OutboxRelay`. Payloads carry ids, the decision, reason codes and the screening time; the screening inputs (sanctions, PEP and KYC flags, amount) are not published. Runtime settings: `KAFKA_BOOTSTRAP_SERVERS`, `KAFKA_SECURITY_PROTOCOL`, `SPRING_PROFILES_ACTIVE=msk` on AWS, `OUTBOX_RELAY_ENABLED`. Backlog metric: `outbox_pending_events{service="svc-cmp-evidence"}`.
 
 ## Dokümantasyon ve Referanslar
 - [Enterprise Architecture Hub](https://github.com/COPUR/fintechbankx-governance-architecture-enablement-enterprise-architecture)

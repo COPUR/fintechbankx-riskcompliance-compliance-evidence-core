@@ -19,6 +19,10 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
     implementation 'org.springframework.boot:spring-boot-starter-security'
     implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
+    // Outbox relay producer; KafkaTemplate is auto-configured from spring.kafka.*
+    implementation 'org.springframework.kafka:spring-kafka'
+    // Amazon MSK IAM authentication (SASL_SSL / AWS_MSK_IAM), activated by the "msk" profile
+    runtimeOnly 'software.amazon.msk:aws-msk-iam-auth:2.2.0'
     runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
     runtimeOnly 'org.postgresql:postgresql'
     runtimeOnly 'org.flywaydb:flyway-database-postgresql'

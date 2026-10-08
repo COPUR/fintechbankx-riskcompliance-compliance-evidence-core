@@ -190,6 +190,26 @@ data "aws_iam_policy_document" "workload" {
     actions   = ["ssm:GetParameter", "ssm:GetParametersByPath"]
     resources = ["arn:aws:ssm:${var.aws_region}:*:parameter/fintechbankx/${var.environment}/${local.service_slug}/*"]
   }
+
+  # Outbox relay producer on Amazon MSK with IAM auth: connect to the cluster
+  # and write only to this service's evt.cmp.compliance.* topics.
+  dynamic "statement" {
+    for_each = var.msk_cluster_arn == "" ? [] : [var.msk_cluster_arn]
+    content {
+      sid       = "ConnectToMsk"
+      actions   = ["kafka-cluster:Connect", "kafka-cluster:DescribeCluster", "kafka-cluster:WriteDataIdempotently"]
+      resources = [statement.value]
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.msk_cluster_arn == "" ? [] : [var.msk_cluster_arn]
+    content {
+      sid       = "WriteOwnComplianceTopics"
+      actions   = ["kafka-cluster:WriteData", "kafka-cluster:DescribeTopic"]
+      resources = ["${replace(statement.value, ":cluster/", ":topic/")}/evt.cmp.compliance.*"]
+    }
+  }
 }
 
 resource "aws_iam_role_policy" "workload" {

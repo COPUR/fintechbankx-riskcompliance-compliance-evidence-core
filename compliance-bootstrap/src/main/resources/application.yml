@@ -35,6 +35,20 @@ spring:
     default-schema: sc_cmp_evidence
     create-schemas: true
     locations: classpath:db/migration
+  # Outbox relay producer. Locally PLAINTEXT; on AWS the "msk" profile below
+  # switches to SASL_SSL with IAM auth through the pod's IRSA role.
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    security:
+      protocol: ${KAFKA_SECURITY_PROTOCOL:PLAINTEXT}
+    producer:
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 5
+        delivery.timeout.ms: 30000
   security:
     oauth2:
       resourceserver:
@@ -73,6 +87,30 @@ management:
     key-values:
       service: svc-cmp-evidence
 
+compliance:
+  outbox:
+    retention: P7D
+    relay:
+      enabled: ${OUTBOX_RELAY_ENABLED:true}
+      interval: PT1S
+      batch-size: 100
+      send-timeout: PT10S
+
 logging:
   pattern:
     level: "%5p [${spring.application.name},%X{traceId:-},%X{spanId:-},%X{correlationId:-}]"
+
+---
+# Amazon MSK with IAM authentication (SPRING_PROFILES_ACTIVE=msk, set by the
+# Helm chart). Credentials come from the pod's IRSA role; nothing secret here.
+spring:
+  config:
+    activate:
+      on-profile: msk
+  kafka:
+    security:
+      protocol: SASL_SSL
+    properties:
+      sasl.mechanism: AWS_MSK_IAM
+      sasl.jaas.config: "software.amazon.msk.auth.iam.IAMLoginModule required;"
+      sasl.client.callback.handler.class: software.amazon.msk.auth.iam.IAMClientCallbackHandler

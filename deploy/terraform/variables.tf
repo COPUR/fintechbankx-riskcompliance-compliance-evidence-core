@@ -45,14 +45,20 @@ variable "eks_oidc_provider_url" {
 
 variable "kubernetes_namespace" {
   type        = string
-  description = "Namespace the Helm chart is installed in."
-  default     = "lending"
+  description = "Namespace the Helm chart is installed in (platform contract: one namespace per bounded context)."
+  default     = "compliance"
 }
 
 variable "kubernetes_service_account" {
   type        = string
   description = "Service account name from the Helm chart."
   default     = "compliance-evidence-service"
+}
+
+variable "msk_cluster_arn" {
+  type        = string
+  description = "ARN of the platform Amazon MSK cluster the outbox relay publishes to (IAM auth). Empty grants no Kafka access."
+  default     = ""
 }
 
 variable "aurora_engine_version" {

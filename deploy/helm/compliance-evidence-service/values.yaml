@@ -14,7 +14,7 @@ serviceAccount:
   roleArn: ""
 
 podLabels:
-  app.kubernetes.io/part-of: fintechbankx-lending
+  app.kubernetes.io/part-of: fintechbankx-compliance
   fintechbankx.io/service-id: svc-cmp-evidence
   sidecar.istio.io/inject: "true"
 
@@ -44,8 +44,16 @@ config:
   DB_URL: ""                      # jdbc:postgresql://<aurora-writer-endpoint>:5432/db_cmp_evidence_<env>?sslmode=require
   DB_USERNAME: compliance_evidence_app
   DB_POOL_MAX: "10"
+  # Amazon MSK, IAM auth through the IRSA role (deploy/terraform msk_cluster_arn).
+  # The "msk" profile in application.yml sets SASL_SSL with AWS_MSK_IAM.
+  KAFKA_BOOTSTRAP_SERVERS: ""     # MSK bootstrap_brokers_sasl_iam, e.g. b-1.<cluster>.kafka.<region>.amazonaws.com:9098
+  KAFKA_SECURITY_PROTOCOL: SASL_SSL
+  SPRING_PROFILES_ACTIVE: msk
   OIDC_ISSUER_URI: ""
   OIDC_JWK_SET_URI: ""
+  # Transactional outbox relay to evt.cmp.compliance.screened.v1. Every replica
+  # runs it; a Postgres advisory lock lets one publish at a time.
+  OUTBOX_RELAY_ENABLED: "true"
 
 # Database credential, synced from AWS Secrets Manager by External Secrets Operator.
 externalSecret:
