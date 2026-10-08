@@ -13,6 +13,8 @@ CREATE TABLE outbox_event (
     topic             VARCHAR(249)  NOT NULL,
     payload           JSONB         NOT NULL,
     correlation_id    VARCHAR(128)  NOT NULL,
+    -- W3C traceparent of the writing request, sent as a record header; null when untraced.
+    traceparent       VARCHAR(55),
     occurred_at       TIMESTAMPTZ   NOT NULL,
     created_at        TIMESTAMPTZ   NOT NULL DEFAULT now(),
     published_at      TIMESTAMPTZ,

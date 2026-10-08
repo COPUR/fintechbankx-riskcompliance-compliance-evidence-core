@@ -110,6 +110,16 @@ class OutboxRelayTest {
         assertThat(header(record, "eventType")).isEqualTo("Compliance.ComplianceScreening.Screened.v1");
         assertThat(header(record, "eventId")).isEqualTo(row.getEventId().toString());
         assertThat(header(record, "x-fapi-interaction-id")).isEqualTo("corr-9");
+        assertThat(record.headers().lastHeader("traceparent")).as("omitted when the row has no trace context").isNull();
+    }
+
+    @Test
+    void storedTraceContextIsSentAsTheW3cTraceparentHeader() {
+        String traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+
+        ProducerRecord<String, String> record = OutboxRelay.toRecord(row("CMP-10", traceparent));
+
+        assertThat(header(record, "traceparent")).isEqualTo(traceparent);
     }
 
     @Test
@@ -124,8 +134,12 @@ class OutboxRelayTest {
     }
 
     private static OutboxEventJpaEntity row(String aggregateId) {
+        return row(aggregateId, null);
+    }
+
+    private static OutboxEventJpaEntity row(String aggregateId, String traceparent) {
         return new OutboxEventJpaEntity(UUID.randomUUID(), "ComplianceScreening", aggregateId, 0L,
-            "Compliance.ComplianceScreening.Screened.v1", "evt.cmp.compliance.screened.v1", "{}", "corr-9", NOW);
+            "Compliance.ComplianceScreening.Screened.v1", "evt.cmp.compliance.screened.v1", "{}", "corr-9", traceparent, NOW);
     }
 
     private static TransactionTemplate inlineTransactions() {

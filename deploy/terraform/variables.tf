@@ -123,3 +123,15 @@ variable "tags" {
   description = "Additional tags (cost centre, data classification)."
   default     = {}
 }
+
+variable "hpa_max_replicas" {
+  type        = number
+  description = "autoscaling.maxReplicas of the Helm values for this environment; sizes the connection alarm."
+  default     = 12
+}
+
+variable "db_pool_max" {
+  type        = number
+  description = "DB_POOL_MAX of the Helm values; sizes the connection alarm."
+  default     = 10
+}

@@ -16,6 +16,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
+import org.slf4j.MDC;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
@@ -293,7 +294,15 @@ class ComplianceServiceIT {
     @Test
     @SuppressWarnings("unchecked")
     void relayPublishesThePendingEventKeyedByScreeningId() throws Exception {
-        screen("PAY-RELAY-1", "C-3", "50.00", false, true, false).andExpect(status().isCreated());
+        // A traced request: the tracing bridge puts the current span in the MDC.
+        MDC.put("traceId", "4bf92f3577b34da6a3ce929d0e0e4736");
+        MDC.put("spanId", "00f067aa0ba902b7");
+        try {
+            screen("PAY-RELAY-1", "C-3", "50.00", false, true, false).andExpect(status().isCreated());
+        } finally {
+            MDC.remove("traceId");
+            MDC.remove("spanId");
+        }
         String screeningId = jdbc.queryForObject(
             "select screening_id from sc_cmp_evidence.compliance_screening where transaction_id = 'PAY-RELAY-1'", String.class);
         when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
@@ -307,6 +316,8 @@ class ComplianceServiceIT {
         Mockito.verify(kafka).send(record.capture());
         assertThat(record.getValue().topic()).isEqualTo("evt.cmp.compliance.screened.v1");
         assertThat(record.getValue().key()).isEqualTo(screeningId);
+        assertThat(new String(record.getValue().headers().lastHeader("traceparent").value(), java.nio.charset.StandardCharsets.UTF_8))
+            .isEqualTo("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
         // The value is the envelope as stored in jsonb: same content, Postgres key order.
         JsonNode envelope = new ObjectMapper().readTree(record.getValue().value());
         assertThat(envelope.get("eventType").asText()).isEqualTo("Compliance.ComplianceScreening.Screened.v1");
@@ -343,6 +354,20 @@ class ComplianceServiceIT {
             Thread.currentThread().interrupt();
             throw new IllegalStateException(e);
         }
+    }
+
+    @Test
+    void theServiceRoleAloneIsNotEnoughTheCallingClientMustBeListed() throws Exception {
+        var unlisted = jwt().jwt(j -> j.subject("svc-rsk-decisioning").claim("azp", "svc-rsk-decisioning"))
+            .authorities(new SimpleGrantedAuthority("ROLE_SERVICE"));
+
+        mvc.perform(post("/api/v1/compliance/screen").with(unlisted)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body("PAY-UNLISTED", "C-1", "10.00", false, true, false)))
+            .andExpect(status().isForbidden());
+        mvc.perform(get("/api/v1/compliance/screenings/{id}", "PAY-ANY").with(unlisted))
+            .andExpect(status().isForbidden());
+        assertThat(jdbc.queryForObject("select count(*) from sc_cmp_evidence.compliance_screening", Integer.class)).isZero();
     }
 
     @Test
@@ -387,6 +412,7 @@ class ComplianceServiceIT {
 
     private static MockHttpServletRequestBuilder asService(MockHttpServletRequestBuilder request) {
         return request.header("x-fapi-interaction-id", "it-interaction-1")
-            .with(jwt().jwt(j -> j.subject("svc-pay-initiation-settlement")).authorities(new SimpleGrantedAuthority("ROLE_SERVICE")));
+            .with(jwt().jwt(j -> j.subject("svc-pay-initiation-settlement").claim("azp", "svc-pay-initiation-settlement"))
+                .authorities(new SimpleGrantedAuthority("ROLE_SERVICE")));
     }
 }

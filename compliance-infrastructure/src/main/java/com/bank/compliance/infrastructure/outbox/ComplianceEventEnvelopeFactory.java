@@ -34,6 +34,13 @@ public class ComplianceEventEnvelopeFactory {
     }
 
     public OutboxEventJpaEntity toOutboxRow(ComplianceScreenedEvent event, String correlationId) {
+        return toOutboxRow(event, correlationId, null);
+    }
+
+    /**
+     * @param traceparent W3C trace context of the writing request, or null
+     */
+    public OutboxEventJpaEntity toOutboxRow(ComplianceScreenedEvent event, String correlationId, String traceparent) {
         String aggregateId = event.screeningId().getValue();
 
         Map<String, Object> data = new LinkedHashMap<>();
@@ -56,7 +63,7 @@ public class ComplianceEventEnvelopeFactory {
         envelope.put("data", data);
 
         return new OutboxEventJpaEntity(event.eventId(), AGGREGATE_TYPE, aggregateId, AGGREGATE_VERSION,
-            SCREENED_EVENT_TYPE, SCREENED_TOPIC, toJson(envelope), correlationId, event.occurredAt());
+            SCREENED_EVENT_TYPE, SCREENED_TOPIC, toJson(envelope), correlationId, traceparent, event.occurredAt());
     }
 
     private String toJson(Map<String, Object> envelope) {

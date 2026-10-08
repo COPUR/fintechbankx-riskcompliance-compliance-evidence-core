@@ -29,7 +29,7 @@ public class OutboxComplianceEventPublisher implements ComplianceEventPublisher 
     @Override
     @Transactional(propagation = Propagation.MANDATORY)
     public void publish(ComplianceScreenedEvent event) {
-        outbox.save(envelopes.toOutboxRow(event, currentCorrelationId()));
+        outbox.save(envelopes.toOutboxRow(event, currentCorrelationId(), TraceContext.currentTraceparent()));
     }
 
     private static String currentCorrelationId() {

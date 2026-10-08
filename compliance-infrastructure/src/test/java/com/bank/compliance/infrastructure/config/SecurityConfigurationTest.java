@@ -1,14 +1,17 @@
 package com.bank.compliance.infrastructure.config;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.autoconfigure.security.oauth2.resource.OAuth2ResourceServerProperties;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class SecurityConfigurationTest {
 
@@ -25,6 +28,40 @@ class SecurityConfigurationTest {
     void tokensWithoutRealmRolesGetNoAuthorities() {
         assertThat(SecurityConfiguration.realmRoles(jwt(Map.of("scope", "compliance:read")))).isEmpty();
         assertThat(SecurityConfiguration.realmRoles(jwt(Map.of("realm_access", Map.of())))).isEmpty();
+    }
+
+    @Test
+    void tokensMustNameThisServiceInTheirAudience() {
+        var validator = SecurityConfiguration.audienceValidator("svc-cmp-evidence");
+
+        assertThat(validator.validate(jwt(Map.of("aud", List.of("account", "svc-cmp-evidence")))).hasErrors()).isFalse();
+        assertThat(validator.validate(jwt(Map.of("aud", List.of("svc-cus-profile-kyc")))).hasErrors()).isTrue();
+        assertThat(validator.validate(jwt(Map.of("scope", "openid"))).hasErrors()).isTrue();
+    }
+
+    @Test
+    void theDecoderUsesTheConfiguredKeySetWithoutCallingItAtStartup() {
+        var properties = new OAuth2ResourceServerProperties();
+        properties.getJwt().setIssuerUri("https://keycloak.example/realms/fintechbankx");
+        properties.getJwt().setJwkSetUri("https://keycloak.example/realms/fintechbankx/protocol/openid-connect/certs");
+
+        assertThat(new SecurityConfiguration().jwtDecoder(properties, "svc-cmp-evidence")).isInstanceOf(NimbusJwtDecoder.class);
+    }
+
+    @Test
+    void anEmptyAudienceSettingStopsStartup() {
+        assertThatThrownBy(() -> SecurityConfiguration.audienceValidator(" ")).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> SecurityConfiguration.audienceValidator(null)).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void onlyListedClientsPassTheServiceCallerPolicy() {
+        var policy = new ServiceCallerPolicy("svc-pay-initiation-settlement, svc-ln-loan-lifecycle");
+
+        assertThat(policy.allowed(SecurityConfiguration.keycloakRealmRoles().convert(jwt(Map.of("azp", "svc-pay-initiation-settlement"))))).isTrue();
+        assertThat(policy.allowed(SecurityConfiguration.keycloakRealmRoles().convert(jwt(Map.of("azp", "svc-rsk-decisioning"))))).isFalse();
+        assertThat(policy.allowed(SecurityConfiguration.keycloakRealmRoles().convert(jwt(Map.of())))).isFalse();
+        assertThat(policy.allowed(null)).isFalse();
     }
 
     private static Jwt jwt(Map<String, Object> claims) {

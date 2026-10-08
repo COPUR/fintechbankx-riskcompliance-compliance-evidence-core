@@ -35,28 +35,34 @@ spring:
     default-schema: sc_cmp_evidence
     create-schemas: true
     locations: classpath:db/migration
-  # Outbox relay producer. Locally PLAINTEXT; on AWS the "msk" profile below
-  # switches to SASL_SSL with IAM auth through the pod's IRSA role.
+  # Outbox relay producer, per the platform Kafka client guide
+  # (fintechbankx-platform-event-streaming-kafka docs/guides/SERVICE_CLIENT_CONFIGURATION.md).
+  # Runtime-neutral here: locally PLAINTEXT; authentication comes from the
+  # "kafka-msk" (AWS, IAM via IRSA) or "kafka-strimzi" (mTLS) profile below.
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     security:
       protocol: ${KAFKA_SECURITY_PROTOCOL:PLAINTEXT}
+    admin:
+      # Topics exist only through the platform catalog; services never create them.
+      auto-create: false
     producer:
+      client-id: svc-cmp-evidence
       acks: all
+      compression-type: lz4
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
       properties:
         enable.idempotence: true
         max.in.flight.requests.per.connection: 5
         delivery.timeout.ms: 30000
+        linger.ms: 5
   security:
     oauth2:
       resourceserver:
         jwt:
           issuer-uri: ${OIDC_ISSUER_URI:http://localhost:8180/realms/fintechbankx}
           jwk-set-uri: ${OIDC_JWK_SET_URI:http://localhost:8180/realms/fintechbankx/protocol/openid-connect/certs}
-          # Tokens must be issued for this service (Keycloak audience mapper on the caller's client).
-          audiences: ${OIDC_AUDIENCE:svc-cmp-evidence}
 
 server:
   port: 8080
@@ -89,11 +95,12 @@ management:
     key-values:
       service: svc-cmp-evidence
 
-security:
-  dpop:
-    # true once every caller sends DPoP-bound tokens; bound tokens are always checked.
-    required: ${DPOP_REQUIRED:false}
-    proof-window: PT60S
+fintechbankx:
+  security:
+    # Tokens must carry this value in "aud" (Keycloak audience mapper on each calling client).
+    audience: ${OIDC_AUDIENCE:svc-cmp-evidence}
+    # Client ids (token "azp") allowed to screen and read results with the SERVICE role.
+    service-callers: ${SERVICE_CALLERS:svc-pay-initiation-settlement}
 
 compliance:
   outbox:
@@ -109,12 +116,12 @@ logging:
     level: "%5p [${spring.application.name},%X{traceId:-},%X{spanId:-},%X{correlationId:-}]"
 
 ---
-# Amazon MSK with IAM authentication (SPRING_PROFILES_ACTIVE=msk, set by the
-# Helm chart). Credentials come from the pod's IRSA role; nothing secret here.
+# Amazon MSK with IAM authentication (SPRING_PROFILES_ACTIVE=kafka-msk, the
+# Helm default). Credentials come from the pod's IRSA role; nothing secret here.
 spring:
   config:
     activate:
-      on-profile: msk
+      on-profile: kafka-msk
   kafka:
     security:
       protocol: SASL_SSL
@@ -122,3 +129,21 @@ spring:
       sasl.mechanism: AWS_MSK_IAM
       sasl.jaas.config: "software.amazon.msk.auth.iam.IAMLoginModule required;"
       sasl.client.callback.handler.class: software.amazon.msk.auth.iam.IAMClientCallbackHandler
+
+---
+# In-cluster Strimzi with TLS client certificates (SPRING_PROFILES_ACTIVE=kafka-strimzi).
+# PEM content comes from Secret kafka-client-tls (Helm kafkaClientTls.enabled),
+# copied from the KafkaUser secret svc-cmp-evidence and the cluster CA.
+spring:
+  config:
+    activate:
+      on-profile: kafka-strimzi
+  kafka:
+    security:
+      protocol: SSL
+    ssl:
+      key-store-type: PEM
+      trust-store-type: PEM
+      key-store-certificate-chain: ${KAFKA_TLS_CERT}
+      key-store-key: ${KAFKA_TLS_KEY}
+      trust-store-certificates: ${KAFKA_TLS_CA}

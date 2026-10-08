@@ -21,6 +21,8 @@ import org.springframework.web.bind.annotation.*;
 @RestController
 @RequestMapping("/api/v1/compliance")
 public class ComplianceController {
+    /** SERVICE role from a client on SERVICE_CALLERS (token azp); see ServiceCallerPolicy. */
+    static final String LISTED_SERVICE = "(hasRole('SERVICE') and @serviceCallers.allowed(authentication))";
     private final ComplianceScreeningUseCase service;
 
     public ComplianceController(ComplianceScreeningUseCase service) {
@@ -28,14 +30,14 @@ public class ComplianceController {
     }
 
     @PostMapping("/screen")
-    @PreAuthorize("hasAnyRole('SERVICE', 'COMPLIANCE_OFFICER', 'ADMIN')")
+    @PreAuthorize("hasAnyRole('COMPLIANCE_OFFICER', 'ADMIN') or " + LISTED_SERVICE)
     public ResponseEntity<ComplianceScreeningResponse> screen(@Valid @RequestBody ComplianceScreeningRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ComplianceScreeningResponse.from(service.screen(request.toCommand())));
     }
 
     @GetMapping("/screenings/{transactionId}")
-    @PreAuthorize("hasAnyRole('SERVICE', 'COMPLIANCE_OFFICER', 'AUDITOR', 'ADMIN')")
+    @PreAuthorize("hasAnyRole('COMPLIANCE_OFFICER', 'AUDITOR', 'ADMIN') or " + LISTED_SERVICE)
     public ResponseEntity<?> find(@PathVariable String transactionId) {
         return service.findByTransactionId(transactionId)
                 .<ResponseEntity<?>>map(result -> ResponseEntity.ok(ComplianceScreeningResponse.from(result)))

@@ -20,7 +20,7 @@ locals {
 }
 
 module "service_base" {
-  source = "git::https://github.com/COPUR/fintechbankx-platform-delivery-iac-terraform-modules.git//modules/microservice-base?ref=main"
+  source = "git::https://github.com/COPUR/fintechbankx-platform-delivery-iac-terraform-modules.git//modules/microservice-base?ref=5ef84ba8c7b56cf53868a686feae1e6c54c2cd6f"
 
   service_name           = "Compliance Evidence Service"
   service_slug           = local.service_slug
@@ -229,14 +229,14 @@ resource "aws_cloudwatch_metric_alarm" "aurora_capacity" {
 
 resource "aws_cloudwatch_metric_alarm" "aurora_connections" {
   alarm_name          = "${local.name}-aurora-connections-high"
-  alarm_description   = "Connections near the pool budget (HPA max replicas x DB_POOL_MAX)."
+  alarm_description   = "Connections above 90% of the pool budget (HPA max replicas x DB_POOL_MAX)."
   namespace           = "AWS/RDS"
   metric_name         = "DatabaseConnections"
   dimensions          = { DBClusterIdentifier = aws_rds_cluster.database.cluster_identifier }
   statistic           = "Maximum"
   period              = 300
   evaluation_periods  = 2
-  threshold           = 100
+  threshold           = floor(var.hpa_max_replicas * var.db_pool_max * 0.9)
   comparison_operator = "GreaterThanThreshold"
   treat_missing_data  = "notBreaching"
   alarm_actions       = var.alarm_topic_arn == "" ? [] : [var.alarm_topic_arn]

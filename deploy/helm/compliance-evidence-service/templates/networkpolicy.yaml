@@ -1,0 +1,40 @@
+{{- if .Values.networkPolicy.enabled }}
+# Network-level backstop enforced by the CNI: only the listed caller
+# namespaces reach the API port, only the observability namespace reaches the
+# management port. Mesh authorization (default-deny plus ALLOW per caller
+# principal) is owned by the mesh repository, not this chart (platform
+# contract addendum).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "compliance.name" . }}
+  labels:
+    {{- include "compliance.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "compliance.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        {{- range .Values.networkPolicy.allowedCallers }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .namespace | quote }}
+          {{- if .podLabels }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .podLabels | nindent 14 }}
+          {{- end }}
+        {{- end }}
+      ports:
+        - port: {{ .Values.service.port }}
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.monitoringNamespace | quote }}
+      ports:
+        - port: {{ .Values.service.managementPort }}
+          protocol: TCP
+{{- end }}

@@ -30,6 +30,10 @@ spec:
         prometheus.io/scrape: "true"
         prometheus.io/port: {{ .Values.service.managementPort | quote }}
         prometheus.io/path: /actuator/prometheus
+        {{- if .Values.kafkaClientTls.enabled }}
+        # Kafka brings its own mutual TLS; the sidecar must not wrap it (platform Kafka client guide).
+        traffic.sidecar.istio.io/excludeOutboundPorts: {{ .Values.kafkaClientTls.brokerPort | quote }}
+        {{- end }}
     spec:
       serviceAccountName: {{ .Values.serviceAccount.name }}
       terminationGracePeriodSeconds: 45
@@ -69,6 +73,24 @@ spec:
             - secretRef:
                 name: {{ include "compliance.secretName" . }}
             {{- end }}
+          {{- if .Values.kafkaClientTls.enabled }}
+          env:
+            - name: KAFKA_TLS_CERT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafkaClientTls.secretName }}
+                  key: user.crt
+            - name: KAFKA_TLS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafkaClientTls.secretName }}
+                  key: user.key
+            - name: KAFKA_TLS_CA
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafkaClientTls.secretName }}
+                  key: ca.crt
+          {{- end }}
           startupProbe:
             httpGet:
               path: /actuator/health/liveness

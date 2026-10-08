@@ -44,6 +44,19 @@ class OutboxComplianceEventPublisherTest {
     }
 
     @Test
+    void theCurrentTraceContextIsStoredForTheRelay() {
+        MDC.put("traceId", "4bf92f3577b34da6a3ce929d0e0e4736");
+        MDC.put("spanId", "00f067aa0ba902b7");
+        ComplianceResult result = ComplianceResultFixtures.result("PAY-3", "C-1", ComplianceDecision.PASS, List.of("COMPLIANT"));
+
+        publisher.publish(result.screenedEvent());
+
+        ArgumentCaptor<OutboxEventJpaEntity> row = ArgumentCaptor.forClass(OutboxEventJpaEntity.class);
+        verify(outbox).save(row.capture());
+        assertThat(row.getValue().getTraceparent()).isEqualTo("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
+    }
+
+    @Test
     void eventsRaisedOutsideARequestGetAFreshCorrelationId() {
         ComplianceResult result = ComplianceResultFixtures.result("PAY-2", "C-1", ComplianceDecision.PASS, List.of("COMPLIANT"));
 
@@ -52,6 +65,7 @@ class OutboxComplianceEventPublisherTest {
         ArgumentCaptor<OutboxEventJpaEntity> row = ArgumentCaptor.forClass(OutboxEventJpaEntity.class);
         verify(outbox).save(row.capture());
         assertThat(row.getValue().getCorrelationId()).matches("[0-9a-f-]{36}");
+        assertThat(row.getValue().getTraceparent()).as("no trace context, no traceparent").isNull();
     }
 
     @Test

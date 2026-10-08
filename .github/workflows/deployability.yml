@@ -47,6 +47,8 @@ jobs:
           helm lint "$chart" $args
           helm template ci "$chart" $args > /dev/null
           helm template ci "$chart" -f "$chart/values-dev.yaml" $args > /dev/null
+          helm template ci "$chart" $args | grep -q "kind: NetworkPolicy"
+          helm template ci "$chart" $args --set kafkaClientTls.enabled=true --set config.SPRING_PROFILES_ACTIVE=kafka-strimzi > /dev/null
 
   terraform:
     name: deploy/terraform

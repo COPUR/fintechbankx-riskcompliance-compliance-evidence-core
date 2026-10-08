@@ -46,14 +46,16 @@ config:
   DB_USERNAME: compliance_evidence_app
   DB_POOL_MAX: "10"
   # Amazon MSK, IAM auth through the IRSA role (deploy/terraform msk_cluster_arn).
-  # The "msk" profile in application.yml sets SASL_SSL with AWS_MSK_IAM.
+  # The "kafka-msk" profile in application.yml sets SASL_SSL with AWS_MSK_IAM;
+  # set kafka-strimzi (and kafkaClientTls.enabled) for an in-cluster Strimzi.
   KAFKA_BOOTSTRAP_SERVERS: ""     # MSK bootstrap_brokers_sasl_iam, e.g. b-1.<cluster>.kafka.<region>.amazonaws.com:9098
   KAFKA_SECURITY_PROTOCOL: SASL_SSL
-  SPRING_PROFILES_ACTIVE: msk
+  SPRING_PROFILES_ACTIVE: kafka-msk
   OIDC_ISSUER_URI: ""
   OIDC_JWK_SET_URI: ""
-  OIDC_AUDIENCE: svc-cmp-evidence
-  DPOP_REQUIRED: "false"           # internal callers are bound by mesh mTLS (platform contract)
+  OIDC_AUDIENCE: svc-cmp-evidence   # tokens must carry the service id in aud (platform contract)
+  # Client ids (token azp) that may screen and read with the SERVICE role.
+  SERVICE_CALLERS: svc-pay-initiation-settlement
   # Transactional outbox relay to evt.cmp.compliance.screened.v1. Every replica
   # runs it; a Postgres advisory lock lets one publish at a time.
   OUTBOX_RELAY_ENABLED: "true"
@@ -70,3 +72,22 @@ externalSecret:
 
 topologySpread:
   maxSkew: 1
+
+# CNI backstop (templates/networkpolicy.yaml). Mesh ALLOW rules per caller
+# principal live in the mesh repository (platform contract addendum).
+networkPolicy:
+  enabled: true
+  monitoringNamespace: observability
+  allowedCallers:
+    - namespace: payments            # svc-pay-initiation-settlement
+      podLabels:
+        app: payment-initiation-settlement-service
+    - namespace: istio-ingress       # compliance officers and auditors through the gateway
+
+# Strimzi only (SPRING_PROFILES_ACTIVE=kafka-strimzi): maps the client
+# certificate, key and cluster CA from this Secret (keys user.crt, user.key,
+# ca.crt) to KAFKA_TLS_CERT/KEY/CA, and keeps the sidecar off Kafka's own mTLS.
+kafkaClientTls:
+  enabled: false
+  secretName: kafka-client-tls
+  brokerPort: 9093
