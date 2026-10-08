@@ -172,6 +172,10 @@ jobs:
         if: ${{ hashFiles('openapi/*.yaml') != '' || hashFiles('api/openapi/*.yaml') != '' || hashFiles('src/main/resources/openapi/*.yaml') != '' }}
         run: ./scripts/ci/oasdiff-breaking.sh
 
+      - name: OpenAPI waiver lifecycle (pull request and post-merge push)
+        if: ${{ github.event_name == 'pull_request' && hashFiles('api/openapi/*.accepted-breaking.txt') != '' }}
+        run: ./scripts/ci/test-oasdiff-waiver.sh
+
       - name: FAPI/DPoP contract guard
         if: ${{ hashFiles('openapi/*.yaml') != '' || hashFiles('api/openapi/*.yaml') != '' || hashFiles('src/main/resources/openapi/*.yaml') != '' }}
         run: ./scripts/ci/fapi-dpop-guard.sh
