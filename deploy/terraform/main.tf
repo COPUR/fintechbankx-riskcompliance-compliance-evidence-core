@@ -36,19 +36,35 @@ module "service_base" {
 
 # --- Encryption -------------------------------------------------------------
 
+# Aurora storage, snapshots, Performance Insights and the RDS-managed master
+# secret. Deliberately NOT tagged fintechbankx.io/secrets: the platform External
+# Secrets Operator role decrypts every key carrying that tag, and it must never
+# be able to decrypt snapshots or storage (ADR-023, platform ruling 2026-10-08).
 resource "aws_kms_key" "database" {
-  description             = "Encrypts ${local.database} storage, snapshots, logs and credentials"
+  description             = "Encrypts ${local.database} storage, snapshots and Performance Insights"
   enable_key_rotation     = true
   deletion_window_in_days = 30
-
-  # The platform External Secrets Operator role may decrypt only keys with
-  # this tag (platform contract, secrets addendum).
-  tags = merge(local.tags, { "fintechbankx.io/secrets" = "true" })
+  tags                    = local.tags
 }
 
 resource "aws_kms_alias" "database" {
   name          = "alias/${local.name}-db"
   target_key_id = aws_kms_key.database.key_id
+}
+
+# Secrets Manager secrets that External Secrets syncs into the namespace
+# (db-app, db-migration) and nothing else. The tag lets the platform ESO role
+# decrypt them (ADR-023).
+resource "aws_kms_key" "secrets" {
+  description             = "Encrypts ${local.service_id} Secrets Manager secrets synced by External Secrets"
+  enable_key_rotation     = true
+  deletion_window_in_days = 30
+  tags                    = merge(local.tags, { "fintechbankx.io/secrets" = "true" })
+}
+
+resource "aws_kms_alias" "secrets" {
+  name          = "alias/${local.name}-secrets"
+  target_key_id = aws_kms_key.secrets.key_id
 }
 
 # --- Network ----------------------------------------------------------------
@@ -149,7 +165,7 @@ resource "aws_secretsmanager_secret" "app_database" {
   # <env>/<service-slug>/...: the only path the platform ESO role may read.
   name                    = "${var.environment}/${local.service_slug}/db-app"
   description             = "Application database credential for ${local.service_id}"
-  kms_key_id              = aws_kms_key.database.arn
+  kms_key_id              = aws_kms_key.secrets.arn
   recovery_window_in_days = 7
 }
 
@@ -159,7 +175,7 @@ resource "aws_secretsmanager_secret" "app_database" {
 resource "aws_secretsmanager_secret" "migration_database" {
   name                    = "${var.environment}/${local.service_slug}/db-migration"
   description             = "Schema owner credential for ${local.service_id} migrations"
-  kms_key_id              = aws_kms_key.database.arn
+  kms_key_id              = aws_kms_key.secrets.arn
   recovery_window_in_days = 7
 }
 
