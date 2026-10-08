@@ -5,7 +5,6 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -14,7 +13,8 @@ import java.util.Map;
  * evt.cmp.compliance.screened.v1, eventType
  * Compliance.ComplianceScreening.Screened.v1, keyed by the screening id.
  *
- * Only ids, the decision, reason codes and the screening time are published.
+ * Only ids, the decision and the screening time are published. Reason codes are restricted
+ * data and stay in the synchronous API response.
  * The screening inputs (sanctions, PEP and KYC flags, amount) never leave the
  * service on events; entitled readers get them through the compliance API.
  */
@@ -48,7 +48,6 @@ public class ComplianceEventEnvelopeFactory {
         data.put("transactionId", event.transactionId());
         data.put("customerId", event.customerId());
         data.put("decision", event.decision().name());
-        data.put("reasons", List.copyOf(event.reasons()));
         data.put("checkedAt", event.checkedAt().toString());
 
         Map<String, Object> envelope = new LinkedHashMap<>();
