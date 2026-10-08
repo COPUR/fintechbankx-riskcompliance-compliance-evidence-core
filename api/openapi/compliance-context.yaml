@@ -197,6 +197,12 @@ components:
           enum: [PASS, REVIEW, FAIL]
         reasons:
           type: array
+          description: >-
+            Rule reason codes, for example SANCTIONS_HIT, KYC_NOT_VERIFIED,
+            PEP_HIGH_VALUE_REVIEW, UNSUPPORTED_CURRENCY (a PEP screening in a
+            currency with no high-value threshold; USD is the only configured
+            currency today) and COMPLIANT. Consumers must accept codes they do
+            not know.
           items:
             type: string
         checkedAt:

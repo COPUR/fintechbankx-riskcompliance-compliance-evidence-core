@@ -262,7 +262,7 @@ class ComplianceServiceIT {
                 """))
             .containsEntry("amount", "12000.5000").containsEntry("currency", "USD")
             .containsEntry("sanctions_hit", false).containsEntry("kyc_verified", true).containsEntry("pep", true)
-            .containsEntry("attestation_source", "CALLER_ATTESTED").containsEntry("rule_set_version", "cmp-screening-rules-v1");
+            .containsEntry("attestation_source", "CALLER_ATTESTED").containsEntry("rule_set_version", "cmp-screening-rules-v2");
         String payload = jdbc.queryForObject("select payload::text from sc_cmp_evidence.outbox_event", String.class);
         assertThat(payload).doesNotContain("12000", "USD", "sanctions", "kyc", "\"pep\"", "CALLER_ATTESTED");
     }

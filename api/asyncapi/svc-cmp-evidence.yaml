@@ -118,7 +118,7 @@ components:
         reasons:
           type: array
           description: 'Rule reason codes, for example SANCTIONS_HIT, KYC_NOT_VERIFIED, PEP_HIGH_VALUE_REVIEW,
-            COMPLIANT. Restricted data: consumers must be entitled to read it. Consumers must accept codes they
+            UNSUPPORTED_CURRENCY (a PEP screening in a currency with no high-value threshold), COMPLIANT. Restricted data: consumers must be entitled to read it. Consumers must accept codes they
             do not know.'
           items:
             type: string
