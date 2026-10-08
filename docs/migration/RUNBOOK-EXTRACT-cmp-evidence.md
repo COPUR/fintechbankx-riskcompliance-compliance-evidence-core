@@ -53,11 +53,11 @@ The backfill is independent of the other contexts' backfills and idempotent. `sc
 
 | Step | Action | Rollback |
 |---|---|---|
-| 1 | Deploy the service with `OUTBOX_RELAY_ENABLED=false` (override the chart default `"true"`) until topics `evt.cmp.compliance.screened.v1` and `evt.cmp.compliance.dlq.v1` exist on MSK and `msk_cluster_arn` is set; run the backfill; reconcile | drop `sc_cmp_evidence`, nothing else changed |
+| 1 | Deploy the service with the chart default `OUTBOX_RELAY_ENABLED: "false"`; screenings are stored and their events wait in `outbox_event`. Run the backfill; reconcile | drop `sc_cmp_evidence`, nothing else changed |
 | 2 | Payments call `POST /api/v1/compliance/screen` with the payment id as `transactionId` and a client-credentials token (`SERVICE` role), behind a flag | flag off; payments keep their local checks |
 | 3 | **Only when** report generation and the review/submission workflow run in `svc-cmp-evidence` (not yet built) **and** the report-file plan above is done: monolith stops writing `compliance_reports`; run the backfill a last time. Until then the monolith stays the writer and the backfill keeps re-running as a mirror | monolith table is still intact |
 | 4 | After the next regulatory reporting cycle: drop the monolith table | restore from snapshot |
-| 5 | Once the topics exist: enable the outbox relay (`OUTBOX_RELAY_ENABLED=true`, the chart default); consumers subscribe to `evt.cmp.compliance.screened.v1` | relay off; events stay in the outbox and are sent in order once it is back on |
+| 5 | Preconditions: the mesh contract lists `msk` for `compliance-evidence-service` (allow-egress-msk generated for namespace `compliance`); topics `evt.cmp.compliance.screened.v1` and `evt.cmp.compliance.dlq.v1` exist on MSK; `msk_cluster_arn` is set. Then turn the relay on with `--set-string config.OUTBOX_RELAY_ENABLED=true` (or in the environment's values file); watch `outbox_pending_events` drain and `outbox_parked_events` stay 0; consumers subscribe to `evt.cmp.compliance.screened.v1` | set it back to `"false"`; events stay in the outbox and are sent in order once it is back on |
 
 ### Parked outbox events
 
@@ -108,6 +108,7 @@ parked and record the decision here.
 - [x] Outbox rows that can never be sent are parked (non-retryable error or attempt cap), skipped, counted by `outbox_parked_events` and replayed by hand (`OutboxRelayTest`, `ComplianceServiceIT`)
 - [ ] AsyncAPI catalog mirror updated from `api/asyncapi/svc-cmp-evidence.yaml` (provider copy changes `screeningId` from `format: uuid` to the `CMP-<uuid>` pattern)
 - [ ] Topic `evt.cmp.compliance.screened.v1` and its DLQ created on the platform cluster; IRSA `msk_cluster_arn` set
+- [ ] Mesh contract lists `msk` for `compliance-evidence-service` (allow-egress-msk generated for namespace `compliance`); until then the chart keeps the relay off
 - [ ] Report generation and the review/submission workflow moved here (precondition for step 3; today only the history is mirrored)
 - [ ] Plan for report files at `report_file_path` (not migrated)
 - [ ] Separate migration owner from the runtime role (Flyway as an init job)

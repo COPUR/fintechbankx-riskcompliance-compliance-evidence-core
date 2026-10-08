@@ -58,7 +58,11 @@ config:
   SERVICE_CALLERS: svc-pay-initiation-settlement
   # Transactional outbox relay to evt.cmp.compliance.screened.v1. Every replica
   # runs it; a Postgres advisory lock lets one publish at a time.
-  OUTBOX_RELAY_ENABLED: "true"
+  # Off until the mesh contract lists msk for compliance-evidence-service
+  # (allow-egress-msk generated for namespace compliance) and the topics exist;
+  # then override with --set-string config.OUTBOX_RELAY_ENABLED=true (runbook step 5).
+  # Screenings are stored and their events wait in the outbox meanwhile.
+  OUTBOX_RELAY_ENABLED: "false"
 
 # Database credential, synced from AWS Secrets Manager by External Secrets Operator.
 externalSecret:
