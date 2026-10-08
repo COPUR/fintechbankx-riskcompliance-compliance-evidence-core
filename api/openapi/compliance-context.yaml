@@ -159,7 +159,7 @@ components:
   schemas:
     ComplianceScreeningRequest:
       type: object
-      required: [transactionId, customerId, amount, sanctionsHit, kycVerified, pep]
+      required: [transactionId, customerId, amount, currency, sanctionsHit, kycVerified, pep]
       properties:
         transactionId:
           type: string
@@ -176,8 +176,9 @@ components:
         currency:
           type: string
           pattern: '^[A-Z]{3}$'
-          default: USD
-          description: ISO 4217 code of the amount, upper case. Optional; USD (the monolith's fallback) when absent.
+          description: >-
+            ISO 4217 code of the amount, upper case. Required: omitted or null
+            is a 400 INVALID_REQUEST; the service never assumes a currency.
         sanctionsHit:
           type: boolean
           description: >-
