@@ -72,6 +72,8 @@ jobs:
           grep -q "app: compliance-evidence-service" <<<"$rendered"
           # Platform outbox alerts key on service_id, scraped from the pod label; a wrong render must fail.
           python3 scripts/ci/check-service-id-label.py svc-cmp-evidence <<<"$rendered"
+          # Platform component label (cicd-templates 335a345) on the pods and in every selector.
+          python3 scripts/ci/check-component-label.py <<<"$rendered"
           # Platform scrapes the management port through these pod annotations; the outbox alerts depend on them.
           python3 scripts/ci/check-scrape-annotations.py <<<"$rendered"
           if helm template ci "$chart" $args | sed '/prometheus.io\/path:/d' \
