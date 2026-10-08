@@ -2,7 +2,6 @@ package com.bank.compliance.infrastructure.outbox;
 
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.KafkaException;
-import org.apache.kafka.common.errors.RetriableException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -27,12 +26,15 @@ import java.util.concurrent.TimeoutException;
  * de-duplicate on eventId, which makes the at-least-once delivery safe.
  *
  * A row that can never be sent does not hold back every later event: a
- * non-retriable failure (RecordTooLargeException, SerializationException,
- * InvalidTopicException, TopicAuthorizationException, anything not
- * retriable) parks it (parked_at) at once and the batch moves on. A
- * retriable failure parks a row only once it has kept failing for longer
- * than retryableParkAfter since its first failure (first_failed_at), so a
- * broker or egress outage delays events but parks none of them. From the
+ * failure caused by the row itself (RecordTooLargeException,
+ * SerializationException, InvalidTopicException) parks it (parked_at) at
+ * once and the batch moves on. Every other failure is about the producer or
+ * the cluster, not the row: retriable errors and timeouts, authentication
+ * and authorisation errors (an IRSA/STS hiccup, an ACL or IAM rollout), an
+ * unclassified KafkaException or any other exception. It stops the batch and
+ * parks the row only once it has kept failing for longer than
+ * retryableParkAfter since its first failure (first_failed_at), so an outage
+ * or a credentials problem delays events but parks at most one row per tick. From the
  * maxAttempts-th failed send on, a retriable failure is logged at ERROR
  * instead of WARN; the count never parks a row. Parked rows are skipped, counted by the
  * outbox.parked.events gauge and replayed by hand (runbook). Each screening
@@ -99,7 +101,7 @@ public class OutboxRelay {
                     Instant now = clock.instant();
                     row.markFailed(describe(cause), now);
                     boolean pastCeiling = Duration.between(row.getFirstFailedAt(), now).compareTo(retryableParkAfter) > 0;
-                    if (isRetriable(cause) && !pastCeiling) {
+                    if (!isPoison(cause) && !pastCeiling) {
                         if (row.getAttempts() >= maxAttempts) {
                             log.error("Outbox relay still cannot publish event {} to {} (attempt {}, failing since {}); will retry",
                                 row.getEventId(), row.getTopic(), row.getAttempts(), row.getFirstFailedAt(), e);
@@ -148,8 +150,11 @@ public class OutboxRelay {
         return e instanceof ExecutionException && e.getCause() != null ? e.getCause() : e;
     }
 
-    private static boolean isRetriable(Throwable cause) {
-        return cause instanceof RetriableException || cause instanceof TimeoutException;
+    /** Failures caused by the row's own payload or topic: retrying it can never succeed. */
+    private static boolean isPoison(Throwable cause) {
+        return cause instanceof org.apache.kafka.common.errors.RecordTooLargeException
+            || cause instanceof org.apache.kafka.common.errors.SerializationException
+            || cause instanceof org.apache.kafka.common.errors.InvalidTopicException;
     }
 
     private static String describe(Throwable cause) {

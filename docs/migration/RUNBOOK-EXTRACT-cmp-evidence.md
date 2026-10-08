@@ -64,16 +64,21 @@ The backfill is independent of the other contexts' backfills and idempotent. `sc
 ### Parked outbox events
 
 The relay parks a row it can never send instead of stalling every later
-event: a non-retryable producer error (`RecordTooLargeException`,
-`SerializationException`, `InvalidTopicException`,
-`TopicAuthorizationException`, anything that is not a Kafka
-`RetriableException` or a timeout) parks it at once. A retriable error (broker
-or egress outage, missing topic, timeout) stops the batch and is retried on the
-next run, however many attempts that takes; it parks the row only once the row
-has kept failing for longer than `compliance.outbox.relay.retryable-park-after`
+event. Only failures caused by the row itself are poison and park it at once:
+`RecordTooLargeException`, `SerializationException`, `InvalidTopicException`.
+Every other failure is about the producer or the cluster, not the row: a
+retriable error or timeout (broker or egress outage, a topic not created yet,
+`UnknownTopicOrPartitionException`), an authentication or authorisation error
+(`SaslAuthenticationException` from an IRSA/STS hiccup,
+`TopicAuthorizationException` during an ACL or IAM-policy rollout), an
+unclassified `KafkaException` or any other exception. It stops the batch and is
+retried on the next run, however many attempts that takes; it parks the row
+only once the row has kept failing for longer than
+`compliance.outbox.relay.retryable-park-after`
 (`OUTBOX_RELAY_RETRYABLE_PARK_AFTER`, default `PT24H`) since its first failure
-(`first_failed_at`, V8). So an outage of minutes or hours delays events but
-parks none, and nothing needs replaying once it is over.
+(`first_failed_at`, V8), and then at most that one row per run. So an outage or
+a credentials problem of minutes or hours delays events but parks none, and
+nothing needs replaying once it is over.
 `compliance.outbox.relay.max-attempts` (`OUTBOX_RELAY_MAX_ATTEMPTS`, default 10)
 never parks a row: from that many failed sends of one row on, each retry is
 logged at ERROR instead of WARN. Parked rows keep `parked_at`, `first_failed_at`,
