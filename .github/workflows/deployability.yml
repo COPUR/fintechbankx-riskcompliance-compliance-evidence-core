@@ -64,6 +64,14 @@ jobs:
           grep -q "secretKey: DB_MIGRATION_USERNAME" <<<"$migration"
           grep -q "name: compliance-evidence-service-db-migration" <<<"$migration"
           if grep -q "DB_MIGRATION_USERNAME" <<<"$rendered"; then echo "migration secret rendered without migrationSecretName" >&2; exit 1; fi
+          # Secrets contract: each ExternalSecret is labelled with the service account and reads only <env>/<sa>/... keys.
+          sa="$(python3 -c 'import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))["serviceAccount"]["name"])' "$chart/values.yaml")"
+          python3 scripts/ci/check-externalsecrets.py "$sa" <<<"$migration"
+          # ...and the check catches a wrong render.
+          if helm template ci "$chart" $args --set externalSecret.remoteSecretName=ci/other-service/db-app \
+              | python3 scripts/ci/check-externalsecrets.py "$sa" 2>/dev/null; then
+            echo "ExternalSecret check accepted a key outside <env>/$sa/" >&2; exit 1
+          fi
           helm template ci "$chart" $args --set kafkaClientTls.enabled=true --set config.SPRING_PROFILES_ACTIVE=kafka-strimzi > /dev/null
 
   terraform:
