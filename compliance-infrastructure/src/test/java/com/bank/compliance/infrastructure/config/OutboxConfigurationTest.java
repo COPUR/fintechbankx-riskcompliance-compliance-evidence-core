@@ -70,7 +70,7 @@ class OutboxConfigurationTest {
     void scheduleRelaysAndPurgesThroughTheRelay() {
         OutboxConfiguration.RelayConfiguration relayConfiguration = new OutboxConfiguration.RelayConfiguration();
         OutboxRelay relay = relayConfiguration.outboxRelay(outbox, mock(KafkaTemplate.class),
-            mock(PlatformTransactionManager.class), Clock.systemUTC(), 10, Duration.ofSeconds(1), Duration.ofDays(7), 10, Duration.ofHours(24));
+            mock(PlatformTransactionManager.class), Clock.systemUTC(), 10, Duration.ofSeconds(1), Duration.ofDays(7), 10, Duration.ofHours(24), Duration.ofSeconds(1), Duration.ofMinutes(5), new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
         OutboxRelay spyRelay = org.mockito.Mockito.spy(relay);
         org.mockito.Mockito.doReturn(0).when(spyRelay).relayOnce();
         org.mockito.Mockito.doReturn(2).when(spyRelay).purgePublished();

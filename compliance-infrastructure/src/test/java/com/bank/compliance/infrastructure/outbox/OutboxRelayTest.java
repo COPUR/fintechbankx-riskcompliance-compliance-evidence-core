@@ -7,6 +7,7 @@ import org.apache.kafka.common.errors.TimeoutException;
 import org.apache.kafka.common.errors.TopicAuthorizationException;
 import org.apache.kafka.common.errors.SaslAuthenticationException;
 import org.apache.kafka.common.errors.SerializationException;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.kafka.core.KafkaProducerException;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -44,9 +45,12 @@ class OutboxRelayTest {
     private final TransactionTemplate transactions = inlineTransactions();
     private static final int MAX_ATTEMPTS = 10;
     private static final Duration PARK_AFTER = Duration.ofHours(24);
+    private static final Duration BACKOFF_INITIAL = Duration.ofSeconds(1);
+    private static final Duration BACKOFF_MAX = Duration.ofMinutes(5);
     private final MutableClock clock = new MutableClock(NOW);
+    private final SimpleMeterRegistry meters = new SimpleMeterRegistry();
     private final OutboxRelay relay = new OutboxRelay(outbox, kafka, transactions,
-        clock, 50, Duration.ofSeconds(1), Duration.ofDays(7), MAX_ATTEMPTS, PARK_AFTER);
+        clock, 50, Duration.ofSeconds(1), Duration.ofDays(7), MAX_ATTEMPTS, PARK_AFTER, BACKOFF_INITIAL, BACKOFF_MAX, meters);
 
     @Test
     void anotherReplicaHoldingTheLockMeansNothingIsSent() {
@@ -93,7 +97,8 @@ class OutboxRelayTest {
         assertThat(kafkaTimeout.getParkedAt()).isNull();
         verify(kafka, times(1)).send(any(ProducerRecord.class));
 
-        // The relay's own wait on the send future running out.
+        // The relay's own wait on the send future running out (after the backoff).
+        clock.advance(BACKOFF_INITIAL);
         OutboxEventJpaEntity relayTimeout = row("CMP-3");
         when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(relayTimeout, row("CMP-4")));
         when(kafka.send(any(ProducerRecord.class))).thenReturn(new CompletableFuture<>());
@@ -203,6 +208,10 @@ class OutboxRelayTest {
         verify(kafka, times(1)).send(any(ProducerRecord.class));
     }
 
+    /**
+     * ADR-021 decision 4: a failure that is not about the payload never
+     * parks or skips a row, however long it lasts.
+     */
     @Test
     void twentyRetriableFailuresInARowDoNotParkTheRow() {
         OutboxEventJpaEntity head = row("CMP-1");
@@ -213,13 +222,69 @@ class OutboxRelayTest {
 
         for (int tick = 0; tick < 20; tick++) {
             assertThat(relay.relayOnce()).isZero();
-            clock.advance(Duration.ofMinutes(1));
+            clock.advance(BACKOFF_MAX);
         }
 
         assertThat(head.getAttempts()).isEqualTo(20).isGreaterThan(MAX_ATTEMPTS);
         assertThat(head.getParkedAt()).isNull();
-        assertThat(head.getFirstFailedAt()).isEqualTo(NOW);
         verify(kafka, times(20)).send(any(ProducerRecord.class));
+    }
+
+    /** After a stopped batch the relay waits 1 s, 2 s, 4 s ... up to 5 min, and resets on success. */
+    @Test
+    void aStoppedBatchBacksOffExponentiallyUpToTheCapAndResetsOnSuccess() {
+        OutboxEventJpaEntity head = row("CMP-1");
+        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(head));
+        when(kafka.send(any(ProducerRecord.class)))
+            .thenAnswer(call -> CompletableFuture.failedFuture(new NotEnoughReplicasException("broker unavailable")));
+
+        relay.relayOnce();                                      // failure 1: wait 1 s
+        assertWaitsExactly(Duration.ofSeconds(1));
+        relay.relayOnce();                                      // failure 2: wait 2 s
+        assertWaitsExactly(Duration.ofSeconds(2));
+        relay.relayOnce();                                      // failure 3: wait 4 s
+        assertWaitsExactly(Duration.ofSeconds(4));
+        for (int failure = 4; failure <= 12; failure++) {
+            relay.relayOnce();
+            clock.advance(BACKOFF_MAX);
+        }
+        relay.relayOnce();                                      // failure 13: 2^12 s is past the cap
+        assertWaitsExactly(BACKOFF_MAX);
+
+        when(kafka.send(any(ProducerRecord.class)))
+            .thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
+        assertThat(relay.relayOnce()).isEqualTo(1);             // success resets the backoff
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(row("CMP-2")));
+        when(kafka.send(any(ProducerRecord.class)))
+            .thenReturn(CompletableFuture.failedFuture(new NotEnoughReplicasException("broker unavailable")));
+        relay.relayOnce();
+        assertWaitsExactly(Duration.ofSeconds(1));
+    }
+
+    private void assertWaitsExactly(Duration wait) {
+        org.mockito.Mockito.clearInvocations(outbox, kafka);
+        clock.advance(wait.minusMillis(1));
+        assertThat(relay.relayOnce()).isZero();
+        verify(outbox, never()).tryRelayLock(anyLong());
+        verify(kafka, never()).send(any(ProducerRecord.class));
+        clock.advance(Duration.ofMillis(1));
+    }
+
+    @Test
+    void everyFailedSendIsCountedByExceptionClass() {
+        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(row("CMP-1"), row("CMP-2")));
+        when(kafka.send(any(ProducerRecord.class)))
+            .thenReturn(CompletableFuture.failedFuture(new RecordTooLargeException("too large")))
+            .thenReturn(CompletableFuture.failedFuture(new SaslAuthenticationException("IAM credentials expired")));
+
+        relay.relayOnce();
+
+        assertThat(meters.get("outbox.publish.failures").tag("exception", "RecordTooLargeException").counter().count()).isEqualTo(1);
+        assertThat(meters.get("outbox.publish.failures").tag("exception", "SaslAuthenticationException").counter().count()).isEqualTo(1);
+        assertThat(meters.get("outbox.publish.failures").tag("exception", "SaslAuthenticationException").counter().getId().getTags())
+            .extracting(io.micrometer.core.instrument.Tag::getKey).containsExactlyInAnyOrder("exception", "service");
     }
 
     @Test
