@@ -17,3 +17,7 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
 {{- define "compliance.secretName" -}}
 {{ include "compliance.name" . }}-db
 {{- end -}}
+
+{{- define "compliance.migrationSecretName" -}}
+{{ include "compliance.name" . }}-db-migration
+{{- end -}}

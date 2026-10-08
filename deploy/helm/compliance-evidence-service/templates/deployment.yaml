@@ -72,6 +72,10 @@ spec:
             {{- if .Values.externalSecret.enabled }}
             - secretRef:
                 name: {{ include "compliance.secretName" . }}
+            {{- if .Values.externalSecret.migrationSecretName }}
+            - secretRef:
+                name: {{ include "compliance.migrationSecretName" . }}
+            {{- end }}
             {{- end }}
           {{- if .Values.kafkaClientTls.enabled }}
           env:

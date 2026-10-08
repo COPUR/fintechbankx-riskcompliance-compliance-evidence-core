@@ -421,22 +421,22 @@ class ComplianceServiceIT {
 
         assertThatThrownBy(() -> runtime.update(
                 "update sc_cmp_evidence.compliance_screening set decision = 'FAIL' where transaction_id = 'PAY-RUNTIME'"))
-            .hasMessageContaining("permission denied for table compliance_screening");
+            .rootCause().hasMessageContaining("permission denied for table compliance_screening");
         assertThatThrownBy(() -> runtime.update(
                 "delete from sc_cmp_evidence.compliance_screening where transaction_id = 'PAY-RUNTIME'"))
-            .hasMessageContaining("permission denied for table compliance_screening");
+            .rootCause().hasMessageContaining("permission denied for table compliance_screening");
         assertThatThrownBy(() -> runtime.execute("truncate sc_cmp_evidence.compliance_screening"))
-            .hasMessageContaining("permission denied for table compliance_screening");
+            .rootCause().hasMessageContaining("permission denied for table compliance_screening");
         assertThatThrownBy(() -> runtime.execute(
                 "alter table sc_cmp_evidence.compliance_screening disable trigger tr_compliance_screening_insert_only"))
-            .hasMessageContaining("must be owner of table compliance_screening");
+            .rootCause().hasMessageContaining("must be owner of").hasMessageContaining("compliance_screening");
         assertThatThrownBy(() -> runtime.execute(
                 "drop trigger tr_compliance_screening_insert_only on sc_cmp_evidence.compliance_screening"))
-            .hasMessageContaining("must be owner of table compliance_screening");
+            .rootCause().hasMessageContaining("must be owner of").hasMessageContaining("compliance_screening");
         assertThatThrownBy(() -> runtime.execute("truncate sc_cmp_evidence.legacy_compliance_report"))
-            .hasMessageContaining("permission denied for table legacy_compliance_report");
+            .rootCause().hasMessageContaining("permission denied for table legacy_compliance_report");
         assertThatThrownBy(() -> runtime.execute("create table sc_cmp_evidence.shadow (id int)"))
-            .hasMessageContaining("permission denied for schema sc_cmp_evidence");
+            .rootCause().hasMessageContaining("permission denied for schema sc_cmp_evidence");
 
         assertThat(runtime.queryForObject(
                 "select decision from sc_cmp_evidence.compliance_screening where transaction_id = 'PAY-RUNTIME'", String.class))

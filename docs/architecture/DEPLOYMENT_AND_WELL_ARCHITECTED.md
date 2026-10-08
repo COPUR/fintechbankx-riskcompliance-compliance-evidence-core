@@ -47,6 +47,7 @@ Then deploy with `--set-string config.OUTBOX_RELAY_ENABLED=true` (or set it in t
 - No consumer of `evt.cmp.compliance.screened.v1` yet, and the topic is not yet created on the platform cluster.
 - The mesh contract gives namespace `compliance` no MSK egress yet, so the relay ships off (see above).
 - Screening evidence has no retention or archival job yet; regulatory retention periods still need to be set.
-- The application DB role (`compliance_evidence_app`) is created by a DBA bootstrap step, not by Terraform.
+- The DB roles (owner `compliance_evidence_owner`, runtime `compliance_evidence_app`) are created by a DBA bootstrap step, not by Terraform; Terraform creates their secrets (`db-migration`, `db-app`).
+- Flyway still runs in the pods, so they hold the owner credential too; a migration Job is the follow-up.
 - `microservice-base` is pinned to a commit; move to a tag once the modules repo publishes releases.
 - No load test yet; HPA targets are starting values.

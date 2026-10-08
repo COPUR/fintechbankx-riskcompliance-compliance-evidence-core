@@ -72,6 +72,10 @@ externalSecret:
     name: aws-secrets-manager
   # Secrets Manager secret from deploy/terraform output app_db_secret_name.
   remoteSecretName: ""
+  # Secrets Manager secret <env>/compliance-evidence-service/db-migration (Terraform
+  # output migration_db_secret_name): the schema owner's {"username","password"}
+  # for Flyway. Empty: Flyway migrates with the app credential (no privilege split).
+  migrationSecretName: ""
   refreshInterval: 1h
 
 topologySpread:

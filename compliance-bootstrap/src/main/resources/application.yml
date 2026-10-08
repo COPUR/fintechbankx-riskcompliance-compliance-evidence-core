@@ -31,6 +31,13 @@ spring:
           time_zone: UTC
           batch_size: 50
   flyway:
+    # Migrations run as the schema owner; the pods' datasource is the runtime
+    # role, which V7 grants only SELECT, INSERT on the evidence table. Without
+    # DB_MIGRATION_* (local runs) Flyway uses the app credentials.
+    user: ${DB_MIGRATION_USERNAME:${spring.datasource.username}}
+    password: ${DB_MIGRATION_PASSWORD:${spring.datasource.password:}}
+    placeholders:
+      runtime_role: ${spring.datasource.username}
     schemas: sc_cmp_evidence
     default-schema: sc_cmp_evidence
     create-schemas: true

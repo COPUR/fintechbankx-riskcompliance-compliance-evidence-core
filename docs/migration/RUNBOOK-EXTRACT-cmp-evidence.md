@@ -21,7 +21,7 @@ repository), following the strangler-fig steps of `fbx-monolith-extraction`.
 | `customers`, `loans` | `svc-cus-profile-kyc`, `svc-ln-loan-lifecycle` | never copied here; `customer_id` is the caller's id, kept as text |
 | Open-finance `compliance_reports` MongoDB collection | open-finance services | consent analytics, a different concept; not moved |
 
-Flyway migrations: `compliance-infrastructure/src/main/resources/db/migration/V1__create_compliance_screening.sql`, `V2__create_legacy_compliance_report.sql`, `V3__create_outbox.sql`, `V4__make_compliance_screening_insert_only.sql`. The service never reads monolith tables and the monolith must not read `sc_cmp_evidence`.
+Flyway migrations: `compliance-infrastructure/src/main/resources/db/migration/V1__create_compliance_screening.sql`, `V2__create_legacy_compliance_report.sql`, `V3__create_outbox.sql`, `V4__make_compliance_screening_insert_only.sql`, `V5__park_outbox_events.sql`, `V6__record_who_attested_screening_facts.sql`, `V7__grant_runtime_role_least_privilege.sql`. The service never reads monolith tables and the monolith must not read `sc_cmp_evidence`.
 
 Screening results store the facts they were decided on (amount, currency, sanctions/KYC/PEP flags, rule set version), where they came from (`attestation_source`: `CALLER_ATTESTED` for a listed service, `STAFF_ATTESTED` for a compliance officer or administrator) and who stated them (`attested_by`: the token `azp` of the service or `sub` of the staff member; V6). The flags come from the caller ([decision 0001](../architecture/decisions/0001-screening-facts-are-caller-attested.md)). A replay from another caller is a 409.
 
@@ -29,13 +29,15 @@ Screening results store the facts they were decided on (amount, currency, sancti
 
 | Role | Used by | Privileges |
 |---|---|---|
-| migration owner (e.g. `compliance_evidence_owner`) | Flyway only | owns `sc_cmp_evidence` and its objects |
-| `compliance_evidence_app` (runtime, `DB_USERNAME`) | the service | `USAGE` on the schema; `SELECT, INSERT` on `compliance_screening` (no `UPDATE`, `DELETE`, `TRUNCATE`); `SELECT, INSERT, UPDATE, DELETE` on `outbox_event` (the relay marks and purges rows); `SELECT` on `legacy_compliance_report` |
+| migration owner (`compliance_evidence_owner`, secret `<env>/compliance-evidence-service/db-migration`) | Flyway only (`DB_MIGRATION_USERNAME` / `DB_MIGRATION_PASSWORD`, Helm `externalSecret.migrationSecretName`) | owns `sc_cmp_evidence` and its objects; needs `CREATE` on the database |
+| `compliance_evidence_app` (runtime, `DB_USERNAME`, secret `<env>/compliance-evidence-service/db-app`) | the service | granted by V7 (Flyway placeholder `runtime_role`): `USAGE` on the schema; `SELECT, INSERT` on `compliance_screening` (no `UPDATE`, `DELETE`, `TRUNCATE`); `SELECT, INSERT, UPDATE, DELETE` on `outbox_event` (the relay marks, parks and purges rows); `SELECT` on `legacy_compliance_report`. Not the owner, so it cannot `ALTER`/`DROP` the tables or disable the V4 trigger (`ComplianceServiceIT.theRuntimeRoleCannotChangeOrRemoveEvidence`) |
 | backfill role | `db/backfill/run-backfill.sh` | `CREATE` on the database (staging schema); `SELECT, INSERT, UPDATE, DELETE` on `legacy_compliance_report` only |
 
 `compliance_screening` is insert-only evidence: besides the grants, the `tr_compliance_screening_insert_only` trigger (V4) refuses `UPDATE` and `DELETE` from every role, the owner included. Any future retention purge needs its own reviewed migration.
 
-Today the service runs Flyway at startup, so the runtime role and the migration owner are the same unless the DBA bootstrap runs Flyway separately; separating them (Flyway as an init job with the owner credential, `spring.flyway.enabled=false` in the pods) is a follow-up before production.
+DBA bootstrap, per environment, before the first deploy: create both roles (the owner with `CREATE` on `db_cmp_evidence_<env>`, the runtime role with `LOGIN` only, no membership in the owner), write their `{"username","password"}` to the two secrets Terraform creates, and set Helm `externalSecret.migrationSecretName`. Flyway then migrates as the owner and V7 grants the runtime role. Without `DB_MIGRATION_*` (local runs) Flyway uses the app credential and V7 changes nothing.
+
+Still open: Flyway runs at pod startup, so the pods hold the owner credential as well; anyone with the pod's environment can act as the owner. Moving Flyway to a migration Job (or pipeline step) that alone mounts the `db-migration` secret, with `spring.flyway.enabled=false` in the pods, closes that. A DBA (or the RDS master user) can always change rows; tamper evidence against them (for example a hash chain) is not built.
 
 ## 2. Backfill and reconciliation
 
@@ -98,7 +100,7 @@ parked and record the decision here.
 
 - [x] Service builds and tests standalone (`ci/build`, `ci/test`, including PostgreSQL integration tests)
 - [x] Own schema and migrations; Hibernate validates the entity at startup
-- [x] One result per transaction: replays (same customer, same facts) return the stored result; a reused id for another customer or with any different fact is a 409; screening rows are insert-only (trigger, grants)
+- [x] One result per transaction: replays (same customer, same facts, same caller) return the stored result; a reused id for another customer, with any different fact or from another caller is a 409; screening rows are insert-only (V4 trigger; V7 grants once the DBA bootstrap separates the roles)
 - [x] Screened facts, rule set version and attestation source stored with each result
 - [x] Screening results readable by compliance officers and auditors; customers cannot screen or read
 - [x] Compliance report backfill rehearsed with reconciliation in CI
@@ -111,5 +113,7 @@ parked and record the decision here.
 - [ ] Mesh contract lists `msk` for `compliance-evidence-service` (allow-egress-msk generated for namespace `compliance`); until then the chart keeps the relay off
 - [ ] Report generation and the review/submission workflow moved here (precondition for step 3; today only the history is mirrored)
 - [ ] Plan for report files at `report_file_path` (not migrated)
-- [ ] Separate migration owner from the runtime role (Flyway as an init job)
+- [x] Runtime role separated from the migration owner: V7 grants, Flyway `DB_MIGRATION_*` credentials, Helm migration secret, Terraform secret; the runtime role cannot `UPDATE`/`DELETE`/`TRUNCATE` evidence or disable the trigger (`ComplianceServiceIT`)
+- [ ] DBA bootstrap of `compliance_evidence_owner` and `compliance_evidence_app` per environment, secrets filled
+- [ ] Flyway moved out of the pods into a migration Job, so the pods no longer hold the owner credential
 - [ ] Production backfill and reconciliation report attached here

@@ -141,13 +141,24 @@ resource "aws_rds_cluster_instance" "database" {
   promotion_tier                        = count.index
 }
 
-# Application credential (role compliance_evidence_app, owner of schema
-# sc_cmp_evidence). The DBA bootstrap in docs/migration creates the role
-# and writes {"username", "password"} here; Terraform never sees the value.
+# Application credential: runtime role compliance_evidence_app, which V7 grants
+# only SELECT, INSERT on the evidence table. The DBA bootstrap in docs/migration
+# creates the role and writes {"username", "password"} here; Terraform never
+# sees the value.
 resource "aws_secretsmanager_secret" "app_database" {
   # <env>/<service-slug>/...: the only path the platform ESO role may read.
   name                    = "${var.environment}/${local.service_slug}/db-app"
   description             = "Application database credential for ${local.service_id}"
+  kms_key_id              = aws_kms_key.database.arn
+  recovery_window_in_days = 7
+}
+
+# Migration owner credential (role compliance_evidence_owner, owner of schema
+# sc_cmp_evidence; Flyway only). Created and filled by the DBA bootstrap like
+# the app credential; Helm value externalSecret.migrationSecretName.
+resource "aws_secretsmanager_secret" "migration_database" {
+  name                    = "${var.environment}/${local.service_slug}/db-migration"
+  description             = "Schema owner credential for ${local.service_id} migrations"
   kms_key_id              = aws_kms_key.database.arn
   recovery_window_in_days = 7
 }

@@ -59,6 +59,11 @@ jobs:
           # The relay stays off until the mesh contract gives this namespace MSK egress (runbook step 1).
           grep -q 'OUTBOX_RELAY_ENABLED: "false"' <<<"$rendered"
           helm template ci "$chart" $args --set-string config.OUTBOX_RELAY_ENABLED=true | grep -q 'OUTBOX_RELAY_ENABLED: "true"'
+          # Migration owner credential: its own ExternalSecret and env vars when configured.
+          migration="$(helm template ci "$chart" $args --set externalSecret.migrationSecretName=ci/db-migration)"
+          grep -q "secretKey: DB_MIGRATION_USERNAME" <<<"$migration"
+          grep -q "name: compliance-evidence-service-db-migration" <<<"$migration"
+          if grep -q "DB_MIGRATION_USERNAME" <<<"$rendered"; then echo "migration secret rendered without migrationSecretName" >&2; exit 1; fi
           helm template ci "$chart" $args --set kafkaClientTls.enabled=true --set config.SPRING_PROFILES_ACTIVE=kafka-strimzi > /dev/null
 
   terraform:
