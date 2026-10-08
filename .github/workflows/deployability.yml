@@ -72,6 +72,12 @@ jobs:
           grep -q "app: compliance-evidence-service" <<<"$rendered"
           # Platform outbox alerts key on service_id, scraped from the pod label; a wrong render must fail.
           python3 scripts/ci/check-service-id-label.py svc-cmp-evidence <<<"$rendered"
+          # Platform scrapes the management port through these pod annotations; the outbox alerts depend on them.
+          python3 scripts/ci/check-scrape-annotations.py <<<"$rendered"
+          if helm template ci "$chart" $args | sed '/prometheus.io\/path:/d' \
+              | python3 scripts/ci/check-scrape-annotations.py 2>/dev/null; then
+            echo "scrape annotation check accepted a render without prometheus.io/path" >&2; exit 1
+          fi
           if helm template ci "$chart" $args --set 'podLabels.fintechbankx\.io/service-id=svc-other' \
               | python3 scripts/ci/check-service-id-label.py svc-cmp-evidence 2>/dev/null; then
             echo "service-id label check accepted a wrong label" >&2; exit 1

@@ -97,13 +97,17 @@ With the chart's 3 replicas and `backoff-max` 5 min that is about one try
 every 100 s. A cluster-wide backoff (next-attempt time in a relay state
 row) is the alternative if retry load matters.
 
-Alerts (PROPOSED to platform observability,
+Alerts (PROPOSED to platform observability until platform's commit lands;
+platform has settled the severities below,
 fintechbankx-platform-observability-sre-operations; no such rule exists there
 yet, on main or in PR #11). Platform owns the rules; the chart ships no
 PrometheusRule. Platform's outbox rules select on the `service_id` label,
 scraped from the pod label `fintechbankx.io/service-id` (the chart sets
 `svc-cmp-evidence`; the deployability job asserts it). Owning squad:
-`compliance` (Risk and Compliance Decisioning Squad).
+`compliance` (Risk and Compliance Decisioning Squad). Scraping relies on the
+pod annotations `prometheus.io/scrape`, `prometheus.io/port` (management port)
+and `prometheus.io/path` (`/actuator/prometheus`); the deployability job
+asserts all three.
 
 ```promql
 # One threshold, used by this rule and by the cut-over rollback trigger: 900 s,
@@ -112,12 +116,14 @@ scraped from the pod label `fintechbankx.io/service-id` (the chart sets
 # for: 5m, severity: critical, squad: compliance
 max(outbox_oldest_pending_age_seconds{service_id="svc-cmp-evidence"}) > 900
 
-# Proposed companion: failed sends in the last 10 minutes (by exception class in the dashboard).
-# squad: compliance
+# Proposed rule: any failed send in the last 10 minutes (by exception class in the dashboard).
+# severity: warning, squad: compliance
 increase(outbox_send_failures_total{service_id="svc-cmp-evidence"}[10m]) > 0
 
-# Supporting query: rows that need a decision.
-max(outbox_parked_events{service_id="svc-cmp-evidence"}) > 0
+# Proposed rule: a row was parked in the last 10 minutes and needs a decision.
+# outbox_parked_events is a gauge, hence delta, not increase. Severity: none yet (pending platform).
+# squad: compliance
+delta(outbox_parked_events{service_id="svc-cmp-evidence"}[10m]) > 0
 ```
 
 Dependency: PR #11's AMP remote-write keep regex `.*outbox_pending.*` drops
