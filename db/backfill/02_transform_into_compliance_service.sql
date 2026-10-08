@@ -2,7 +2,9 @@
 -- into sc_cmp_evidence.legacy_compliance_report. Run by run-backfill.sh
 -- against the COMPLIANCE SERVICE database (db_cmp_evidence_<env>) after Flyway.
 --
--- Every column is copied as is. Reports still move through a review and
+-- Every column is copied as is; total_amount_currency is the currency the
+-- operator states for the monolith's amounts (psql variable report_currency,
+-- run-backfill.sh third argument). Reports still move through a review and
 -- submission workflow in the monolith until cut-over, so a re-run refreshes
 -- rows already copied instead of skipping them; nothing in this service
 -- writes these rows, so the monolith stays the source of truth until then.
@@ -30,8 +32,8 @@ DELETE FROM sc_cmp_evidence.legacy_compliance_report t
  WHERE NOT EXISTS (SELECT 1 FROM backfill_stage.compliance_reports s WHERE s.report_id = t.report_id);
 
 INSERT INTO sc_cmp_evidence.legacy_compliance_report (
-    report_id, report_type, generation_date, reporting_period_start, reporting_period_end, total_loans, total_amount, high_risk_loans, compliance_score, regulatory_findings, findings_details, report_data, report_file_path, generated_by, reviewed_by, review_date, status, submission_date, regulator_reference, next_report_due, created_at, updated_at, version)
-SELECT report_id, report_type, generation_date, reporting_period_start, reporting_period_end, total_loans, total_amount, high_risk_loans, compliance_score, regulatory_findings, findings_details, report_data, report_file_path, generated_by, reviewed_by, review_date, status, submission_date, regulator_reference, next_report_due, created_at, updated_at, version
+    report_id, report_type, generation_date, reporting_period_start, reporting_period_end, total_loans, total_amount, high_risk_loans, compliance_score, regulatory_findings, findings_details, report_data, report_file_path, generated_by, reviewed_by, review_date, status, submission_date, regulator_reference, next_report_due, created_at, updated_at, version, total_amount_currency)
+SELECT report_id, report_type, generation_date, reporting_period_start, reporting_period_end, total_loans, total_amount, high_risk_loans, compliance_score, regulatory_findings, findings_details, report_data, report_file_path, generated_by, reviewed_by, review_date, status, submission_date, regulator_reference, next_report_due, created_at, updated_at, version, :'report_currency'
   FROM backfill_stage.compliance_reports
 ON CONFLICT (report_id) DO UPDATE SET
        report_type = EXCLUDED.report_type,
@@ -55,6 +57,7 @@ ON CONFLICT (report_id) DO UPDATE SET
        next_report_due = EXCLUDED.next_report_due,
        created_at = EXCLUDED.created_at,
        updated_at = EXCLUDED.updated_at,
-       version = EXCLUDED.version;
+       version = EXCLUDED.version,
+       total_amount_currency = EXCLUDED.total_amount_currency;
 
 COMMIT;

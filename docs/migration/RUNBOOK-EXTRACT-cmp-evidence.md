@@ -41,25 +41,29 @@ Still open: Flyway runs at pod startup, so the pods hold the owner credential as
 
 ## 2. Backfill and reconciliation
 
-`db/backfill/run-backfill.sh "<monolith conninfo>" "<compliance service conninfo>"`
+`db/backfill/run-backfill.sh "<monolith conninfo>" "<compliance service conninfo>" <report currency>`
 
-1. Exports `compliance_reports` in one read-only snapshot.
+`<report currency>` is the ISO 4217 code of the monolith's report amounts: `compliance_reports.total_amount` has no currency, and the home-currency decision is open, so the operator states it (the monolith code assumes USD) and the run refuses to start without a valid code. It is stored in `legacy_compliance_report.total_amount_currency` (V9).
+
+1. Exports `compliance_reports` and reads its totals in one read-only `REPEATABLE READ` snapshot, so a report written meanwhile cannot make the copy and the totals disagree.
 2. Stages them in `backfill_stage` and upserts them into `legacy_compliance_report` (`02_transform_into_compliance_service.sql`). Every column is kept. Reports still move through review and submission in the monolith until cut-over, so a re-run refreshes rows already copied, and a report deleted in the monolith is deleted from the copy (legacy copy only; screening evidence is never touched). An empty export against a non-empty copy is refused.
-3. Compares report counts and the loan, amount and findings totals with the monolith, and lists any staged report whose copy differs and any copied report the monolith no longer has (`03_reconcile.sql`). Any difference fails the run.
+3. Compares report counts and the loan, amount (per currency) and findings totals with the monolith's snapshot totals, and lists any staged report whose copy differs in any of the 23 copied columns and any copied report the monolith no longer has (`03_reconcile.sql`). Any difference fails the run.
 
-The backfill is independent of the other contexts' backfills and idempotent. `scripts/migration/verify-backfill.sh` rehearses it on a scratch PostgreSQL (two runs, a workflow change in the source and a third run, a deletion in the source and a fourth run, and an empty export that must be refused) and runs in CI (`deploy/data-split-rehearsal`).
+The backfill is independent of the other contexts' backfills and idempotent. `scripts/migration/verify-backfill.sh` rehearses it on a scratch PostgreSQL (a run without a report currency that must be refused, two runs, a workflow change in the source and a third run, a deletion in the source and a fourth run, an empty export that must be refused, and drift planted in each column the reconciliation once skipped) and runs in CI (`deploy/data-split-rehearsal`).
 
 **Report files are not migrated.** `report_file_path` is copied as text, but the files it points to (generated report documents in the monolith's storage) are not moved. Before step 3 the squad needs a plan: copy the files to this service's storage (an S3 bucket owned by `svc-cmp-evidence`, KMS-encrypted, retention per regulation) and rewrite the paths, or keep them where they are with read access documented. Until then the paths in `legacy_compliance_report` point into monolith storage.
 
 ## 3. Cutover plan
 
-| Step | Action | Rollback |
-|---|---|---|
-| 1 | Deploy the service with the chart default `OUTBOX_RELAY_ENABLED: "false"`; screenings are stored and their events wait in `outbox_event`. Run the backfill; reconcile | drop `sc_cmp_evidence`, nothing else changed |
-| 2 | Payments call `POST /api/v1/compliance/screen` with the payment id as `transactionId` and a client-credentials token (`SERVICE` role), behind a flag | flag off; payments keep their local checks |
-| 3 | **Only when** report generation and the review/submission workflow run in `svc-cmp-evidence` (not yet built) **and** the report-file plan above is done: monolith stops writing `compliance_reports`; run the backfill a last time. Until then the monolith stays the writer and the backfill keeps re-running as a mirror | monolith table is still intact |
-| 4 | After the next regulatory reporting cycle: drop the monolith table | restore from snapshot |
-| 5 | Preconditions: the mesh contract lists `msk` for `compliance-evidence-service` (allow-egress-msk generated for namespace `compliance`); topic `evt.cmp.compliance.screened.v1` exists on MSK (no DLQ: this service consumes nothing); `msk_cluster_arn` is set. Then turn the relay on with `--set-string config.OUTBOX_RELAY_ENABLED=true` (or in the environment's values file); watch `outbox_pending_events` drain and `outbox_parked_events` stay 0; consumers subscribe to `evt.cmp.compliance.screened.v1` | set it back to `"false"`; events stay in the outbox and are sent in order once it is back on |
+| Step | Action | Owner | Rollback trigger | Rollback |
+|---|---|---|---|---|
+| 1 | Deploy the service with the chart default `OUTBOX_RELAY_ENABLED: "false"`; screenings are stored and their events wait in `outbox_event`. Run the backfill; reconcile | compliance squad (deploy), DBA (bootstrap, backfill) | reconciliation fails, or the service is not ready within 10 min of the deploy | drop `sc_cmp_evidence`, nothing else changed  |
+| 2 | Payments call `POST /api/v1/compliance/screen` with the payment id as `transactionId` and a client-credentials token (`SERVICE` role), behind a flag | payments squad, with the compliance squad | screening 5xx rate above 1 % over 5 min, p99 above 2 s, or any 400 caused by a missing field | flag off; payments keep their local checks  |
+| 3 | **Only when** report generation and the review/submission workflow run in `svc-cmp-evidence` (not yet built) **and** the report-file plan above is done: monolith stops writing `compliance_reports`; run the backfill a last time. Until then the monolith stays the writer and the backfill keeps re-running as a mirror | compliance squad, with the monolith owner | last backfill does not reconcile, or a report written in the monolith after the stop | monolith table is still intact  |
+| 4 | After the next regulatory reporting cycle: drop the monolith table | monolith owner, compliance squad sign-off | any open regulator query on the period, or a reconciliation gap found afterwards | restore from snapshot  |
+| 5 | Preconditions: the mesh contract lists `msk` for `compliance-evidence-service` (allow-egress-msk generated for namespace `compliance`); topic `evt.cmp.compliance.screened.v1` exists on MSK (no DLQ: this service consumes nothing); `msk_cluster_arn` is set. Then turn the relay on with `--set-string config.OUTBOX_RELAY_ENABLED=true` (or in the environment's values file); watch `outbox_pending_events` drain and `outbox_parked_events` stay 0; consumers subscribe to `evt.cmp.compliance.screened.v1` | compliance squad, platform (mesh, MSK) | `outbox_parked_events` > 0, or `outbox_oldest_pending_age_seconds` above 300 s for 10 min | set it back to `"false"`; events stay in the outbox and are sent in order once it is back on  |
+
+Owners and triggers are Proposed; the owning squads confirm them before step 1.
 
 ### Parked outbox events
 
