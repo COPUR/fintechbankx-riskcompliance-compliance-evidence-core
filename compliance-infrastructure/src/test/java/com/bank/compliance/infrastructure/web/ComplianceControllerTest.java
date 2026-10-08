@@ -28,6 +28,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -79,7 +80,7 @@ class ComplianceControllerTest {
     @Test
     void reusedTransactionIdForAnotherCustomerIsAConflict() throws Exception {
         when(service.screen(any(ComplianceScreeningCommand.class)))
-                .thenThrow(new com.bank.compliance.domain.TransactionAlreadyScreenedException("TX-3"));
+                .thenThrow(new com.bank.compliance.domain.TransactionAlreadyScreenedException());
 
         mockMvc.perform(post("/api/v1/compliance/screen")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -87,7 +88,9 @@ class ComplianceControllerTest {
                             {"transactionId":"TX-3","customerId":"C2","amount":10,"currency":"USD","sanctionsHit":false,"kycVerified":true,"pep":false}
                         """))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value("TRANSACTION_ALREADY_SCREENED"));
+                .andExpect(jsonPath("$.code").value("TRANSACTION_ALREADY_SCREENED"))
+                .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("TX-3"))))
+                .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("C2"))));
     }
 
     @Test
@@ -115,7 +118,7 @@ class ComplianceControllerTest {
     @Test
     void aScreeningRecordedConcurrentlyIsADuplicateRequest() throws Exception {
         when(service.screen(any(ComplianceScreeningCommand.class)))
-                .thenThrow(new ScreeningAlreadyRecordedException("TX-5", null));
+                .thenThrow(new ScreeningAlreadyRecordedException(null));
 
         mockMvc.perform(post("/api/v1/compliance/screen").contentType(MediaType.APPLICATION_JSON).content(body("TX-5", "C1", "10")))
                 .andExpect(status().isConflict())
