@@ -23,7 +23,7 @@ repository), following the strangler-fig steps of `fbx-monolith-extraction`.
 
 Flyway migrations: `compliance-infrastructure/src/main/resources/db/migration/V1__create_compliance_screening.sql`, `V2__create_legacy_compliance_report.sql`, `V3__create_outbox.sql`, `V4__make_compliance_screening_insert_only.sql`. The service never reads monolith tables and the monolith must not read `sc_cmp_evidence`.
 
-Screening results store the facts they were decided on (amount, currency, sanctions/KYC/PEP flags, rule set version) and `attestation_source = CALLER_ATTESTED`: the flags come from the caller ([decision 0001](../architecture/decisions/0001-screening-facts-are-caller-attested.md)).
+Screening results store the facts they were decided on (amount, currency, sanctions/KYC/PEP flags, rule set version), where they came from (`attestation_source`: `CALLER_ATTESTED` for a listed service, `STAFF_ATTESTED` for a compliance officer or administrator) and who stated them (`attested_by`: the token `azp` of the service or `sub` of the staff member; V6). The flags come from the caller ([decision 0001](../architecture/decisions/0001-screening-facts-are-caller-attested.md)). A replay from another caller is a 409.
 
 ### Database roles (DBA bootstrap)
 

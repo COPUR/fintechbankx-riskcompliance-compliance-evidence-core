@@ -47,6 +47,10 @@ public class ComplianceScreeningJpaEntity {
     @Column(name = "attestation_source", nullable = false, length = 32, updatable = false)
     private String attestationSource;
 
+    /** NULL only for rows written before V6 (caller not recorded); see the mapper. */
+    @Column(name = "attested_by", length = 128, updatable = false)
+    private String attestedBy;
+
     @Column(name = "rule_set_version", nullable = false, length = 64, updatable = false)
     private String ruleSetVersion;
 
@@ -65,7 +69,7 @@ public class ComplianceScreeningJpaEntity {
 
     ComplianceScreeningJpaEntity(String screeningId, String transactionId, String customerId,
                                  BigDecimal amount, String currency, boolean sanctionsHit, boolean kycVerified,
-                                 boolean pep, String attestationSource, String decision, List<String> reasons,
+                                 boolean pep, String attestationSource, String attestedBy, String decision, List<String> reasons,
                                  String ruleSetVersion, Instant checkedAt) {
         this.screeningId = screeningId;
         this.transactionId = transactionId;
@@ -76,6 +80,7 @@ public class ComplianceScreeningJpaEntity {
         this.kycVerified = kycVerified;
         this.pep = pep;
         this.attestationSource = attestationSource;
+        this.attestedBy = attestedBy;
         this.ruleSetVersion = ruleSetVersion;
         this.decision = decision;
         this.reasons = reasons;
@@ -91,6 +96,7 @@ public class ComplianceScreeningJpaEntity {
     public boolean isKycVerified() { return kycVerified; }
     public boolean isPep() { return pep; }
     public String getAttestationSource() { return attestationSource; }
+    public String getAttestedBy() { return attestedBy; }
     public String getRuleSetVersion() { return ruleSetVersion; }
     public String getDecision() { return decision; }
     public List<String> getReasons() { return reasons; }

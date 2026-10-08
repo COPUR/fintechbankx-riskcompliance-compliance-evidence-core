@@ -36,4 +36,16 @@ class ComplianceScreeningPersistenceMapperTest {
         assertThat(loaded.getFacts()).isEqualTo(screened.getFacts());
         assertThat(loaded.getRuleSetVersion()).isEqualTo(screened.getRuleSetVersion());
     }
+
+    @Test
+    void aRowWrittenBeforeTheCallerWasRecordedSaysSoAndIsNeverAReplay() {
+        ComplianceScreeningJpaEntity legacy = new ComplianceScreeningJpaEntity("CMP-OLD", "TX-OLD", "C-1",
+                new java.math.BigDecimal("100.00"), "AED", false, true, false, "CALLER_ATTESTED", null, "PASS",
+                List.of("COMPLIANT"), "cmp-screening-rules-v1", java.time.Instant.parse("2026-10-01T00:00:00Z"));
+
+        ComplianceResult loaded = ComplianceScreeningPersistenceMapper.toDomain(legacy);
+
+        assertThat(loaded.getAttestedBy()).isEqualTo("not-recorded-before-v6");
+        assertThat(loaded.isReplayOf("C-1", ComplianceResultFixtures.facts())).isFalse();
+    }
 }

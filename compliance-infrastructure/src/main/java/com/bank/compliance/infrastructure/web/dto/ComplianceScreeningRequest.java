@@ -1,5 +1,6 @@
 package com.bank.compliance.infrastructure.web.dto;
 
+import com.bank.compliance.domain.Attestation;
 import com.bank.compliance.domain.port.in.ComplianceScreeningCommand;
 import jakarta.validation.constraints.NotNull;
 
@@ -26,7 +27,8 @@ public record ComplianceScreeningRequest(
     static final String SANCTIONS_HIT_REQUIRED = "sanctionsHit is required";
     static final String PEP_REQUIRED = "pep is required";
 
-    public ComplianceScreeningCommand toCommand() {
+    /** @param attestation who states these facts, taken from the caller's token by the web adapter */
+    public ComplianceScreeningCommand toCommand(Attestation attestation) {
         if (sanctionsHit == null) {
             throw new IllegalArgumentException(SANCTIONS_HIT_REQUIRED);
         }
@@ -40,7 +42,8 @@ public record ComplianceScreeningRequest(
                 currency == null ? DEFAULT_CURRENCY : currency,
                 sanctionsHit,
                 kycVerified,
-                pep
+                pep,
+                attestation
         );
     }
 }

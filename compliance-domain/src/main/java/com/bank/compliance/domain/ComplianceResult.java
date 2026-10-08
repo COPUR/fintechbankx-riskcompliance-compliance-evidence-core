@@ -92,12 +92,15 @@ public final class ComplianceResult {
 
     /**
      * True when a repeated screening request for this transaction is a replay
-     * of the recorded one: same customer and the same facts. Only then may the
-     * stored result be returned for it; anything else would hand out evidence
-     * for facts that were never screened.
+     * of the recorded one: same customer, the same facts and the same caller
+     * attesting them. Only then may the stored result be returned for it;
+     * anything else would hand out evidence for facts that were never
+     * screened, or that another caller stated.
      */
     public boolean isReplayOf(String otherCustomerId, ScreeningFacts otherFacts) {
-        return customerId.equals(otherCustomerId) && facts.sameFactsAs(otherFacts);
+        return customerId.equals(otherCustomerId)
+                && facts.sameFactsAs(otherFacts)
+                && facts.attestation().equals(otherFacts.attestation());
     }
 
     /**
@@ -126,7 +129,12 @@ public final class ComplianceResult {
     }
 
     public AttestationSource getAttestation() {
-        return facts.attestation();
+        return facts.attestation().source();
+    }
+
+    /** The caller who stated the facts: token azp for a service, sub for staff. */
+    public String getAttestedBy() {
+        return facts.attestation().attestedBy();
     }
 
     public String getRuleSetVersion() {

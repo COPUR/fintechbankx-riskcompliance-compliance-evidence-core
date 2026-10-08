@@ -11,7 +11,7 @@ class ComplianceScreeningRequestTest {
 
     @Test
     void currencyDefaultsToUsdForCallersThatDoNotSendIt() {
-        var command = new ComplianceScreeningRequest("TX-1", "C-1", new BigDecimal("10.00"), null, false, true, false).toCommand();
+        var command = new ComplianceScreeningRequest("TX-1", "C-1", new BigDecimal("10.00"), null, false, true, false).toCommand(com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS);
 
         assertThat(command.currency()).isEqualTo("USD");
         assertThat(command.facts().amount()).isEqualByComparingTo("10.00");
@@ -19,17 +19,17 @@ class ComplianceScreeningRequestTest {
 
     @Test
     void missingSanctionsOrPepFlagsAreRefusedNotDefaulted() {
-        assertThatThrownBy(() -> new ComplianceScreeningRequest("TX-1", "C-1", BigDecimal.TEN, "USD", null, true, false).toCommand())
+        assertThatThrownBy(() -> new ComplianceScreeningRequest("TX-1", "C-1", BigDecimal.TEN, "USD", null, true, false).toCommand(com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS))
                 .isInstanceOf(IllegalArgumentException.class).hasMessage("sanctionsHit is required");
-        assertThatThrownBy(() -> new ComplianceScreeningRequest("TX-1", "C-1", BigDecimal.TEN, "USD", false, true, null).toCommand())
+        assertThatThrownBy(() -> new ComplianceScreeningRequest("TX-1", "C-1", BigDecimal.TEN, "USD", false, true, null).toCommand(com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS))
                 .isInstanceOf(IllegalArgumentException.class).hasMessage("pep is required");
     }
 
     @Test
     void anExplicitCurrencyIsKeptAndValidatedByTheDomain() {
-        assertThat(new ComplianceScreeningRequest("TX-1", "C-1", BigDecimal.TEN, "USD", false, true, false).toCommand().currency())
+        assertThat(new ComplianceScreeningRequest("TX-1", "C-1", BigDecimal.TEN, "USD", false, true, false).toCommand(com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS).currency())
                 .isEqualTo("USD");
-        assertThatThrownBy(() -> new ComplianceScreeningRequest("TX-1", "C-1", BigDecimal.TEN, "usd", false, true, false).toCommand())
+        assertThatThrownBy(() -> new ComplianceScreeningRequest("TX-1", "C-1", BigDecimal.TEN, "usd", false, true, false).toCommand(com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("currency");
     }

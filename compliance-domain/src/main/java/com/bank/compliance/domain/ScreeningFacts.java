@@ -18,7 +18,7 @@ public record ScreeningFacts(
         boolean sanctionsHit,
         boolean kycVerified,
         boolean pep,
-        AttestationSource attestation
+        Attestation attestation
 ) {
     public static final int MAX_AMOUNT_SCALE = 4;
     public static final int MAX_AMOUNT_INTEGER_DIGITS = 15;
@@ -41,15 +41,10 @@ public record ScreeningFacts(
         Objects.requireNonNull(attestation, "attestation is required");
     }
 
-    public static ScreeningFacts callerAttested(BigDecimal amount, String currency,
-                                                boolean sanctionsHit, boolean kycVerified, boolean pep) {
-        return new ScreeningFacts(amount, currency, sanctionsHit, kycVerified, pep, AttestationSource.CALLER_ATTESTED);
-    }
-
     /**
      * True when another request states the same facts: same amount by value
-     * (100 equals 100.00), currency and flags. Where the facts came from is
-     * not part of the comparison.
+     * (100 equals 100.00), currency and flags. Who attested them is not part
+     * of this comparison; {@link ComplianceResult#isReplayOf} checks it.
      */
     public boolean sameFactsAs(ScreeningFacts other) {
         return other != null
