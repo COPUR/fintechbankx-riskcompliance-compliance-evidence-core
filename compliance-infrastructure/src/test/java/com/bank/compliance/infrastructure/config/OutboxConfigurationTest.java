@@ -26,12 +26,23 @@ class OutboxConfigurationTest {
     @Test
     void pendingGaugeUsesThePlatformMetricNameAndServiceTag() {
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
-        when(outbox.countByPublishedAtIsNull()).thenReturn(4L);
+        when(outbox.countByPublishedAtIsNullAndParkedAtIsNull()).thenReturn(4L);
 
         configuration.outboxPendingEventsGauge(registry, outbox);
 
         Gauge gauge = registry.get("outbox.pending.events").tag("service", "svc-cmp-evidence").gauge();
         assertThat(gauge.value()).isEqualTo(4.0);
+    }
+
+    @Test
+    void parkedGaugeCountsRowsTheRelayGaveUpOn() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        when(outbox.countByPublishedAtIsNullAndParkedAtIsNotNull()).thenReturn(2L);
+
+        configuration.outboxParkedEventsGauge(registry, outbox);
+
+        Gauge gauge = registry.get("outbox.parked.events").tag("service", "svc-cmp-evidence").gauge();
+        assertThat(gauge.value()).isEqualTo(2.0);
     }
 
     @Test
@@ -45,7 +56,7 @@ class OutboxConfigurationTest {
     void scheduleRelaysAndPurgesThroughTheRelay() {
         OutboxConfiguration.RelayConfiguration relayConfiguration = new OutboxConfiguration.RelayConfiguration();
         OutboxRelay relay = relayConfiguration.outboxRelay(outbox, mock(KafkaTemplate.class),
-            mock(PlatformTransactionManager.class), Clock.systemUTC(), 10, Duration.ofSeconds(1), Duration.ofDays(7));
+            mock(PlatformTransactionManager.class), Clock.systemUTC(), 10, Duration.ofSeconds(1), Duration.ofDays(7), 10);
         OutboxRelay spyRelay = org.mockito.Mockito.spy(relay);
         org.mockito.Mockito.doReturn(0).when(spyRelay).relayOnce();
         org.mockito.Mockito.doReturn(2).when(spyRelay).purgePublished();

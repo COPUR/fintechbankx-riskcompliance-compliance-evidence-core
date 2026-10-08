@@ -1,7 +1,13 @@
 package com.bank.compliance.infrastructure.outbox;
 
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.errors.NotEnoughReplicasException;
+import org.apache.kafka.common.errors.RecordTooLargeException;
+import org.apache.kafka.common.errors.TimeoutException;
+import org.apache.kafka.common.errors.TopicAuthorizationException;
+import org.apache.kafka.common.errors.SerializationException;
 import org.junit.jupiter.api.Test;
+import org.springframework.kafka.core.KafkaProducerException;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
 import org.springframework.transaction.support.SimpleTransactionStatus;
@@ -14,6 +20,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
@@ -34,8 +41,9 @@ class OutboxRelayTest {
     private final SpringDataOutboxRepository outbox = mock(SpringDataOutboxRepository.class);
     private final KafkaTemplate<String, String> kafka = mock(KafkaTemplate.class);
     private final TransactionTemplate transactions = inlineTransactions();
+    private static final int MAX_ATTEMPTS = 10;
     private final OutboxRelay relay = new OutboxRelay(outbox, kafka, transactions,
-        Clock.fixed(NOW, ZoneOffset.UTC), 50, Duration.ofSeconds(1), Duration.ofDays(7));
+        Clock.fixed(NOW, ZoneOffset.UTC), 50, Duration.ofSeconds(1), Duration.ofDays(7), MAX_ATTEMPTS);
 
     @Test
     void anotherReplicaHoldingTheLockMeansNothingIsSent() {
@@ -47,25 +55,142 @@ class OutboxRelayTest {
     }
 
     @Test
-    void aFailedSendStopsTheBatchSoLaterEventsCannotOvertakeIt() {
+    void aRetriableFailureStopsTheBatchSoLaterEventsCannotOvertakeIt() {
         OutboxEventJpaEntity first = row("CMP-1");
-        OutboxEventJpaEntity second = row("CMP-1");
-        OutboxEventJpaEntity third = row("CMP-1");
+        OutboxEventJpaEntity second = row("CMP-2");
+        OutboxEventJpaEntity third = row("CMP-3");
         when(outbox.tryRelayLock(anyLong())).thenReturn(true);
         when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(first, second, third));
         when(kafka.send(any(ProducerRecord.class)))
             .thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null))
-            .thenReturn(CompletableFuture.failedFuture(new IllegalStateException("broker down")));
+            .thenReturn(CompletableFuture.failedFuture(new NotEnoughReplicasException("2 of 3 replicas in sync")));
 
         int sent = relay.relayOnce();
 
         assertThat(sent).isEqualTo(1);
         assertThat(first.getPublishedAt()).isEqualTo(NOW);
         assertThat(second.getPublishedAt()).isNull();
+        assertThat(second.getParkedAt()).as("a retriable failure is retried, not parked").isNull();
         assertThat(second.getAttempts()).isEqualTo(1);
-        assertThat(second.getLastError()).isEqualTo("ExecutionException");
+        assertThat(second.getLastError()).startsWith("NotEnoughReplicasException");
         assertThat(third.getAttempts()).isZero();
         verify(kafka, times(2)).send(any(ProducerRecord.class));
+    }
+
+    @Test
+    void timeoutsAreRetriableWhetherKafkaOrTheRelayGivesUp() {
+        // Kafka's own TimeoutException (metadata or delivery timeout, for example a missing topic).
+        OutboxEventJpaEntity kafkaTimeout = row("CMP-1");
+        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(kafkaTimeout, row("CMP-2")));
+        when(kafka.send(any(ProducerRecord.class)))
+            .thenReturn(CompletableFuture.failedFuture(new TimeoutException("Topic not present in metadata after 10000 ms")));
+
+        assertThat(relay.relayOnce()).isZero();
+        assertThat(kafkaTimeout.getParkedAt()).isNull();
+        verify(kafka, times(1)).send(any(ProducerRecord.class));
+
+        // The relay's own wait on the send future running out.
+        OutboxEventJpaEntity relayTimeout = row("CMP-3");
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(relayTimeout, row("CMP-4")));
+        when(kafka.send(any(ProducerRecord.class))).thenReturn(new CompletableFuture<>());
+
+        assertThat(relay.relayOnce()).isZero();
+        assertThat(relayTimeout.getParkedAt()).isNull();
+        assertThat(relayTimeout.getLastError()).startsWith("TimeoutException");
+        verify(kafka, times(2)).send(any(ProducerRecord.class));
+    }
+
+    @Test
+    void aPermanentFailureParksTheRowAndTheNextRowIsPublished() {
+        OutboxEventJpaEntity tooLarge = row("CMP-1");
+        OutboxEventJpaEntity next = row("CMP-2");
+        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(tooLarge, next));
+        when(kafka.send(any(ProducerRecord.class)))
+            .thenReturn(CompletableFuture.failedFuture(new KafkaProducerException(null, "Failed to send",
+                new RecordTooLargeException("The message is 2000000 bytes"))))
+            .thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
+
+        int sent = relay.relayOnce();
+
+        assertThat(sent).isEqualTo(1);
+        assertThat(tooLarge.getParkedAt()).isEqualTo(NOW);
+        assertThat(tooLarge.getPublishedAt()).isNull();
+        assertThat(tooLarge.getAttempts()).isEqualTo(1);
+        assertThat(tooLarge.getLastError()).startsWith("RecordTooLargeException: The message is 2000000 bytes");
+        assertThat(next.getPublishedAt()).isEqualTo(NOW);
+        verify(kafka, times(2)).send(any(ProducerRecord.class));
+    }
+
+    @Test
+    void failuresThrownBySendItselfAreClassifiedTheSameWay() {
+        OutboxEventJpaEntity unserializable = row("CMP-1");
+        OutboxEventJpaEntity unauthorised = row("CMP-2");
+        OutboxEventJpaEntity next = row("CMP-3");
+        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(unserializable, unauthorised, next));
+        when(kafka.send(any(ProducerRecord.class)))
+            .thenThrow(new SerializationException("cannot serialize"))
+            .thenThrow(new TopicAuthorizationException(Set.of("evt.cmp.compliance.screened.v1")))
+            .thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
+
+        assertThat(relay.relayOnce()).isEqualTo(1);
+
+        assertThat(unserializable.getParkedAt()).isEqualTo(NOW);
+        assertThat(unauthorised.getParkedAt()).isEqualTo(NOW);
+        assertThat(unauthorised.getLastError()).startsWith("TopicAuthorizationException");
+        assertThat(next.getPublishedAt()).isEqualTo(NOW);
+    }
+
+    @Test
+    void aRowThatReachesTheAttemptCapIsParkedAndTheNextRowIsPublished() {
+        OutboxEventJpaEntity stuck = row("CMP-1");
+        for (int attempt = 1; attempt < MAX_ATTEMPTS; attempt++) {
+            stuck.markFailed("NotEnoughReplicasException");
+        }
+        OutboxEventJpaEntity next = row("CMP-2");
+        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(stuck, next));
+        when(kafka.send(any(ProducerRecord.class)))
+            .thenReturn(CompletableFuture.failedFuture(new NotEnoughReplicasException("still out of sync")))
+            .thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
+
+        assertThat(relay.relayOnce()).isEqualTo(1);
+
+        assertThat(stuck.getAttempts()).isEqualTo(MAX_ATTEMPTS);
+        assertThat(stuck.getParkedAt()).isEqualTo(NOW);
+        assertThat(next.getPublishedAt()).isEqualTo(NOW);
+    }
+
+    @Test
+    void aRowBelowTheAttemptCapIsNotParked() {
+        OutboxEventJpaEntity row = row("CMP-1");
+        for (int attempt = 1; attempt < MAX_ATTEMPTS - 1; attempt++) {
+            row.markFailed("NotEnoughReplicasException");
+        }
+        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(row, row("CMP-2")));
+        when(kafka.send(any(ProducerRecord.class)))
+            .thenReturn(CompletableFuture.failedFuture(new NotEnoughReplicasException("still out of sync")));
+
+        assertThat(relay.relayOnce()).isZero();
+
+        assertThat(row.getAttempts()).isEqualTo(MAX_ATTEMPTS - 1);
+        assertThat(row.getParkedAt()).isNull();
+    }
+
+    @Test
+    void lastErrorFitsTheColumn() {
+        OutboxEventJpaEntity row = row("CMP-1");
+        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(row));
+        when(kafka.send(any(ProducerRecord.class)))
+            .thenReturn(CompletableFuture.failedFuture(new RecordTooLargeException("x".repeat(2000))));
+
+        relay.relayOnce();
+
+        assertThat(row.getLastError()).hasSize(500);
     }
 
     @Test

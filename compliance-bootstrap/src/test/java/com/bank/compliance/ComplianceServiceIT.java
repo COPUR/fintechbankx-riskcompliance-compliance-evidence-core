@@ -307,11 +307,11 @@ class ComplianceServiceIT {
             "select screening_id from sc_cmp_evidence.compliance_screening where transaction_id = 'PAY-RELAY-1'", String.class);
         when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
         OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
-            Clock.systemUTC(), 100, Duration.ofSeconds(5), Duration.ofDays(7));
+            Clock.systemUTC(), 100, Duration.ofSeconds(5), Duration.ofDays(7), 10);
 
         assertThat(relay.relayOnce()).isEqualTo(1);
 
-        assertThat(outbox.countByPublishedAtIsNull()).isZero();
+        assertThat(outbox.countByPublishedAtIsNullAndParkedAtIsNull()).isZero();
         ArgumentCaptor<ProducerRecord<String, String>> record = ArgumentCaptor.forClass(ProducerRecord.class);
         Mockito.verify(kafka).send(record.capture());
         assertThat(record.getValue().topic()).isEqualTo("evt.cmp.compliance.screened.v1");
@@ -324,6 +324,44 @@ class ComplianceServiceIT {
         assertThat(envelope.at("/data/screeningId").asText()).isEqualTo(screeningId);
         assertThat(envelope.at("/data/decision").asText()).isEqualTo("PASS");
         assertThat(relay.relayOnce()).isZero();
+    }
+
+    /**
+     * A parked row is skipped by the relay, counted by the parked gauge and
+     * sent again once the runbook's un-park statement clears parked_at.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void parkedRowsAreSkippedUntilTheRunbookUnparksThem() throws Exception {
+        screen("PAY-PARK-1", "C-1", "10.00", false, true, false).andExpect(status().isCreated());
+        screen("PAY-PARK-2", "C-1", "20.00", false, true, false).andExpect(status().isCreated());
+        String parkedScreening = jdbc.queryForObject(
+            "select screening_id from sc_cmp_evidence.compliance_screening where transaction_id = 'PAY-PARK-1'", String.class);
+        jdbc.update("""
+            update sc_cmp_evidence.outbox_event
+            set parked_at = now(), attempts = 1, last_error = 'RecordTooLargeException: too large'
+            where aggregate_id = ?
+            """, parkedScreening);
+        when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
+        OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
+            Clock.systemUTC(), 100, Duration.ofSeconds(5), Duration.ofDays(7), 10);
+
+        assertThat(relay.relayOnce()).as("only the row behind the parked one").isEqualTo(1);
+        assertThat(outbox.countByPublishedAtIsNullAndParkedAtIsNotNull()).isEqualTo(1);
+        assertThat(outbox.countByPublishedAtIsNullAndParkedAtIsNull()).isZero();
+
+        // Manual replay, as in the runbook.
+        jdbc.update("""
+            update sc_cmp_evidence.outbox_event
+            set parked_at = null, attempts = 0, last_error = null
+            where parked_at is not null and published_at is null and aggregate_id = ?
+            """, parkedScreening);
+
+        assertThat(relay.relayOnce()).isEqualTo(1);
+        assertThat(outbox.countByPublishedAtIsNullAndParkedAtIsNotNull()).isZero();
+        ArgumentCaptor<ProducerRecord<String, String>> records = ArgumentCaptor.forClass(ProducerRecord.class);
+        Mockito.verify(kafka, Mockito.times(2)).send(records.capture());
+        assertThat(records.getAllValues().getLast().key()).isEqualTo(parkedScreening);
     }
 
     private int outboxRows() {
