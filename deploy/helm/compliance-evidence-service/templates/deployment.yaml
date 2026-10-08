@@ -1,3 +1,4 @@
+{{- include "compliance.validateDatabaseTls" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -77,8 +78,11 @@ spec:
                 name: {{ include "compliance.migrationSecretName" . }}
             {{- end }}
             {{- end }}
-          {{- if .Values.kafkaClientTls.enabled }}
           env:
+            # Aurora CA bundle (DB_URL sslrootcert points at the same file).
+            - name: DB_SSL_ROOT_CERT
+              value: {{ include "compliance.databaseCaFile" . | quote }}
+            {{- if .Values.kafkaClientTls.enabled }}
             - name: KAFKA_TLS_CERT
               valueFrom:
                 secretKeyRef:
@@ -94,7 +98,7 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.kafkaClientTls.secretName }}
                   key: ca.crt
-          {{- end }}
+            {{- end }}
           startupProbe:
             httpGet:
               path: /actuator/health/liveness
@@ -127,6 +131,16 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            - name: database-ca
+              mountPath: {{ .Values.databaseCa.mountPath }}
+              readOnly: true
       volumes:
         - name: tmp
           emptyDir: {}
+        # Not optional: without the bundle the pod must not start.
+        - name: database-ca
+          configMap:
+            name: {{ .Values.databaseCa.configMapName }}
+            items:
+              - key: {{ .Values.databaseCa.key }}
+                path: {{ .Values.databaseCa.key }}

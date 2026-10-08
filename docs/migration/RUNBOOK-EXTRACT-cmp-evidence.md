@@ -55,6 +55,14 @@ The backfill is independent of the other contexts' backfills and idempotent. `sc
 
 ## 3. Cutover plan
 
+### Deployment prerequisites
+
+Before step 1, in each environment:
+
+- DBA bootstrap of both roles done and their secrets filled (section 1, "Database roles").
+- ConfigMap `rds-ca-bundle` (key `global-bundle.pem`, the Amazon RDS CA bundle) exists in namespace `compliance`. The platform's trust-manager Bundle in the service-mesh repository is meant to publish it (cicd-templates 4f0f266); it is not in that repository's history yet, so check the namespace. The chart mounts it read-only at `/etc/fintechbankx/rds-ca` and the volume is not optional: without the ConfigMap the pods do not start.
+- `config.DB_URL` is the Terraform output `jdbc_url`, which uses `sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem`: the driver verifies Aurora's certificate and host name (`sslmode=require` would encrypt but trust any certificate). The chart refuses to render a `jdbc:postgresql` URL without `sslmode=verify-full`. Flyway, as the migration owner, connects through the same URL, so both roles are verified.
+
 | Step | Action | Owner | Rollback trigger | Rollback |
 |---|---|---|---|---|
 | 1 | Deploy the service with the chart default `OUTBOX_RELAY_ENABLED: "false"`; screenings are stored and their events wait in `outbox_event`. Run the backfill; reconcile | compliance squad (deploy), DBA (bootstrap, backfill) | reconciliation fails, or the service is not ready within 10 min of the deploy | drop `sc_cmp_evidence`, nothing else changed  |

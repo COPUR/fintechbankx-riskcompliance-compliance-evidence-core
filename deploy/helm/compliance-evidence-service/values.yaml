@@ -42,7 +42,9 @@ podDisruptionBudget:
 
 # Non-secret runtime settings, rendered into a ConfigMap.
 config:
-  DB_URL: ""                      # jdbc:postgresql://<aurora-writer-endpoint>:5432/db_cmp_evidence_<env>?sslmode=require
+  # Terraform output jdbc_url, e.g. jdbc:postgresql://<aurora-writer-endpoint>:5432/db_cmp_evidence_<env>?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem
+  # Rendering fails if a jdbc:postgresql DB_URL lacks sslmode=verify-full. Flyway (migration owner) uses this URL too.
+  DB_URL: ""
   DB_USERNAME: compliance_evidence_app
   DB_POOL_MAX: "10"
   # Amazon MSK, IAM auth through the IRSA role (deploy/terraform msk_cluster_arn).
@@ -63,6 +65,18 @@ config:
   # then override with --set-string config.OUTBOX_RELAY_ENABLED=true (runbook step 5).
   # Screenings are stored and their events wait in the outbox meanwhile.
   OUTBOX_RELAY_ENABLED: "false"
+
+# Amazon RDS CA bundle for Aurora TLS with certificate and host-name verification
+# (cicd-templates 4f0f266). ConfigMap rds-ca-bundle (key global-bundle.pem) is
+# published in each service namespace by the mesh platform repo's trust-manager
+# Bundle. Mounted read-only at mountPath and exported as DB_SSL_ROOT_CERT; the
+# volume is not optional, so a missing bundle keeps the pod from starting
+# instead of connecting unverified. There is no switch to turn it off: this
+# service always has a PostgreSQL database.
+databaseCa:
+  configMapName: rds-ca-bundle
+  key: global-bundle.pem
+  mountPath: /etc/fintechbankx/rds-ca
 
 # Database credential, synced from AWS Secrets Manager by External Secrets Operator.
 externalSecret:

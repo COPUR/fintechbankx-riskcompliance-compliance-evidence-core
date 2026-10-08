@@ -52,7 +52,9 @@ jobs:
         run: |
           chart=deploy/helm/compliance-evidence-service
           args="--set image.repository=ci/compliance-evidence-service --set image.tag=${{ github.sha }} --set externalSecret.remoteSecretName=ci/compliance-evidence-service/db-app"
-          args="$args --set config.DB_URL=jdbc:postgresql://ci:5432/db --set config.KAFKA_BOOTSTRAP_SERVERS=ci:9098"
+          # Aurora TLS (cicd-templates 4f0f266): the Terraform jdbc_url shape, verify-full against the mounted RDS CA bundle.
+          args="$args --set config.DB_URL=jdbc:postgresql://ci:5432/db?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem"
+          args="$args --set config.KAFKA_BOOTSTRAP_SERVERS=ci:9098"
           args="$args --set config.OIDC_ISSUER_URI=https://ci/realms/fintechbankx --set config.OIDC_JWK_SET_URI=https://ci/certs"
           # Empty required settings must fail the render, not produce pods that cannot start.
           if helm template ci "$chart" --set image.repository=ci/x --set image.tag=x --set externalSecret.remoteSecretName=ci/db-app > /dev/null 2>&1; then
@@ -74,6 +76,25 @@ jobs:
           python3 scripts/ci/check-service-id-label.py svc-cmp-evidence <<<"$rendered"
           # Platform component label (cicd-templates 335a345) on the pods and in every selector.
           python3 scripts/ci/check-component-label.py <<<"$rendered"
+          # Aurora TLS (cicd-templates 4f0f266): ConfigMap rds-ca-bundle (global-bundle.pem) mounted read-only at
+          # /etc/fintechbankx/rds-ca, not optional, DB_SSL_ROOT_CERT exported, DB_URL with sslmode=verify-full.
+          python3 scripts/ci/check-database-ca.py <<<"$rendered"
+          helm template ci "$chart" -f "$chart/values-dev.yaml" $args | python3 scripts/ci/check-database-ca.py
+          # ...and the check catches a writable mount or an optional volume.
+          if sed '/readOnly: true/d' <<<"$rendered" | python3 scripts/ci/check-database-ca.py 2>/dev/null; then
+            echo "database CA check accepted a mount without readOnly" >&2; exit 1
+          fi
+          if sed 's/^\( *\)name: rds-ca-bundle$/\1name: rds-ca-bundle\n\1optional: true/' <<<"$rendered" \
+              | python3 scripts/ci/check-database-ca.py 2>/dev/null; then
+            echo "database CA check accepted an optional rds-ca-bundle volume" >&2; exit 1
+          fi
+          # Rendering must fail for a PostgreSQL DB_URL without sslmode=verify-full.
+          for bad in "jdbc:postgresql://ci:5432/db?sslmode=require" "jdbc:postgresql://ci:5432/db"; do
+            if out="$(helm template ci "$chart" $args --set "config.DB_URL=$bad" 2>&1)"; then
+              echo "chart rendered with DB_URL $bad" >&2; exit 1
+            fi
+            grep -q "config.DB_URL must use sslmode=verify-full" <<<"$out"
+          done
           # Platform scrapes the management port through these pod annotations; the outbox alerts depend on them.
           python3 scripts/ci/check-scrape-annotations.py <<<"$rendered"
           if helm template ci "$chart" $args | sed '/prometheus.io\/path:/d' \
@@ -112,7 +133,9 @@ jobs:
           args="--set image.repository=ci/compliance-evidence-service --set image.tag=${{ github.sha }}"
           args="$args --set externalSecret.remoteSecretName=ci/compliance-evidence-service/db-app"
           args="$args --set externalSecret.migrationSecretName=ci/compliance-evidence-service/db-migration"
-          args="$args --set config.DB_URL=jdbc:postgresql://ci:5432/db --set config.KAFKA_BOOTSTRAP_SERVERS=ci:9098"
+          # Aurora TLS (cicd-templates 4f0f266): the Terraform jdbc_url shape, verify-full against the mounted RDS CA bundle.
+          args="$args --set config.DB_URL=jdbc:postgresql://ci:5432/db?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem"
+          args="$args --set config.KAFKA_BOOTSTRAP_SERVERS=ci:9098"
           args="$args --set config.OIDC_ISSUER_URI=https://ci/realms/fintechbankx --set config.OIDC_JWK_SET_URI=https://ci/certs"
           # Schemas pinned to commits: Kubernetes 1.30 (strict) and the ExternalSecret CRD.
           k8s='https://raw.githubusercontent.com/yannh/kubernetes-json-schema/39a87cd29966bc0b3434e8cfbc2061782c8cb69a/{{.NormalizedKubernetesVersion}}-standalone{{.StrictSuffix}}/{{.ResourceKind}}{{.KindSuffix}}.json'
