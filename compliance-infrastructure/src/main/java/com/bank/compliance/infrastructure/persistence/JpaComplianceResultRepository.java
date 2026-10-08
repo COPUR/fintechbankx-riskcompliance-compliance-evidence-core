@@ -38,7 +38,7 @@ public class JpaComplianceResultRepository implements ComplianceResultRepository
             screenings.saveAndFlush(ComplianceScreeningPersistenceMapper.toEntity(result));
         } catch (DataIntegrityViolationException e) {
             if (isTransactionIdConflict(e)) {
-                throw new ScreeningAlreadyRecordedException(result.getTransactionId(), e);
+                throw new ScreeningAlreadyRecordedException(e);
             }
             throw e;
         }

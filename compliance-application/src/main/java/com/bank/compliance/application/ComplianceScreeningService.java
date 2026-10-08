@@ -37,7 +37,7 @@ public class ComplianceScreeningService implements ComplianceScreeningUseCase {
             // A replay (same customer, same facts) gets the recorded result; anything
             // else under this transaction id is refused and the evidence is kept.
             if (!existing.get().isReplayOf(command.customerId(), command.facts())) {
-                throw new TransactionAlreadyScreenedException(command.transactionId());
+                throw new TransactionAlreadyScreenedException();
             }
             return existing.get();
         }

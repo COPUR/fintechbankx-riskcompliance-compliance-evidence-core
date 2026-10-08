@@ -114,7 +114,7 @@ class ComplianceScreeningServiceTest {
 
         assertThatThrownBy(() -> service.screen(sanctionsFlipped))
                 .isInstanceOf(TransactionAlreadyScreenedException.class)
-                .hasMessageContaining("TX-7");
+                .message().doesNotContain("TX-7");
         verify(ruleService, never()).screen(any());
         verify(repository, never()).save(any());
         verify(eventPublisher, never()).publish(any());
@@ -157,7 +157,7 @@ class ComplianceScreeningServiceTest {
 
         assertThatThrownBy(() -> service.screen(command))
                 .isInstanceOf(TransactionAlreadyScreenedException.class)
-                .hasMessageContaining("TX-9");
+                .message().doesNotContain("TX-9");
         verify(repository, never()).save(any());
         verify(eventPublisher, never()).publish(any());
     }

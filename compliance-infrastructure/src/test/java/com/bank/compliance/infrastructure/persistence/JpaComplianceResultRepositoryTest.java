@@ -35,7 +35,7 @@ class JpaComplianceResultRepositoryTest {
 
         assertThatThrownBy(() -> repository.save(result))
                 .isInstanceOf(ScreeningAlreadyRecordedException.class)
-                .hasMessageContaining("TX-JPA-1");
+                .message().doesNotContain("TX-JPA-1");
     }
 
     @Test

@@ -64,7 +64,8 @@ paths:
         '409':
           description: >-
             TRANSACTION_ALREADY_SCREENED (transactionId already screened for
-            another customer or with different facts) or DUPLICATE_REQUEST (a
+            another customer, with different facts or by a different caller;
+            the message carries no ids) or DUPLICATE_REQUEST (a
             concurrent screening of the same transaction won; retry).
           content:
             application/json:
