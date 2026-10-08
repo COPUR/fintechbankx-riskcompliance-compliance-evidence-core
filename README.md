@@ -47,7 +47,7 @@ Bu repository, FinTechBankX DDD/EDA dönüşümünde **svc-cmp-evidence** servis
 
 | What | Command / path |
 |---|---|
-| Unit and integration tests | `./gradlew test` (integration tests need `TEST_DB_URL` or Docker) |
+| Tests, ArchUnit rules and coverage gates | `./gradlew check` (integration tests need `TEST_DB_URL` or Docker) |
 | Run locally | `SPRING_DATASOURCE_PASSWORD=... ./gradlew :compliance-bootstrap:bootRun` (Kafka on `localhost:9092`, or `OUTBOX_RELAY_ENABLED=false`) |
 | Database migrations | `compliance-infrastructure/src/main/resources/db/migration` (schema `sc_cmp_evidence`) |
 | Container image | `docker build -t compliance-evidence-service .` |
@@ -57,6 +57,7 @@ Bu repository, FinTechBankX DDD/EDA dönüşümünde **svc-cmp-evidence** servis
 | Deployment and Well-Architected mapping | [DEPLOYMENT_AND_WELL_ARCHITECTED](docs/architecture/DEPLOYMENT_AND_WELL_ARCHITECTED.md) |
 
 Module layout: `compliance-domain` (screening result, rules, events, ports) ← `compliance-application` (use case) ← `compliance-infrastructure` (JPA, transactional outbox, web, security) ← `compliance-bootstrap` (Spring Boot app).
+Packages follow the service guardrails (ADR-028): use case and command in `domain.port.in`, repository and publisher ports in `domain.port.out`, web DTOs in `infrastructure.web.dto`. `compliance-bootstrap/src/test/java/com/bank/compliance/HexagonalArchitectureTest.java` enforces the four ArchUnit rules on `./gradlew check`.
 
 ### Published events
 
