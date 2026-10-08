@@ -5,6 +5,7 @@
 {{- define "compliance.selectorLabels" -}}
 app.kubernetes.io/name: {{ include "compliance.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: service
 {{- end -}}
 
 {{- define "compliance.labels" -}}
