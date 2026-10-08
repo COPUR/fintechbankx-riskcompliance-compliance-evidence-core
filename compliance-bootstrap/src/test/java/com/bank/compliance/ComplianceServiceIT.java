@@ -87,8 +87,9 @@ class ComplianceServiceIT {
 
     @BeforeEach
     void cleanTables() {
-        // TRUNCATE: screening rows are insert-only (row-level DELETE is refused by a trigger).
-        jdbc.execute("truncate sc_cmp_evidence.outbox_event, sc_cmp_evidence.compliance_screening");
+        // TRUNCATE as the migration owner: screening rows are insert-only (row-level DELETE is refused by a
+        // trigger) and the runtime role the service connects as has no TRUNCATE.
+        PostgresTestDatabase.owner().execute("truncate sc_cmp_evidence.outbox_event, sc_cmp_evidence.compliance_screening");
     }
 
     @Test
@@ -269,13 +270,14 @@ class ComplianceServiceIT {
     }
 
     @Test
-    void screeningEvidenceCannotBeUpdatedOrDeleted() throws Exception {
+    void screeningEvidenceCannotBeUpdatedOrDeletedEvenByTheOwner() throws Exception {
         screen("PAY-LOCKED", "C-1", "10.00", false, true, false).andExpect(status().isCreated());
+        JdbcTemplate owner = PostgresTestDatabase.owner();
 
-        assertThatThrownBy(() -> jdbc.update(
+        assertThatThrownBy(() -> owner.update(
                 "update sc_cmp_evidence.compliance_screening set decision = 'FAIL' where transaction_id = 'PAY-LOCKED'"))
             .hasMessageContaining("insert-only evidence; UPDATE refused");
-        assertThatThrownBy(() -> jdbc.update(
+        assertThatThrownBy(() -> owner.update(
                 "delete from sc_cmp_evidence.compliance_screening where transaction_id = 'PAY-LOCKED'"))
             .hasMessageContaining("insert-only evidence; DELETE refused");
         assertThat(jdbc.queryForObject(
@@ -404,6 +406,41 @@ class ComplianceServiceIT {
     private static org.springframework.test.web.servlet.request.RequestPostProcessor officer() {
         return jwt().jwt(j -> j.subject(OFFICER_SUBJECT).claim("azp", "fintechbankx-web"))
             .authorities(new SimpleGrantedAuthority("ROLE_COMPLIANCE_OFFICER"));
+    }
+
+    /**
+     * The service connects as a runtime role that may read and insert
+     * evidence but not change it: UPDATE, DELETE and TRUNCATE are not granted,
+     * and only the owner may disable the insert-only trigger.
+     */
+    @Test
+    void theRuntimeRoleCannotChangeOrRemoveEvidence() throws Exception {
+        screen("PAY-RUNTIME", "C-1", "10.00", false, true, false).andExpect(status().isCreated());
+        assertThat(jdbc.queryForObject("select current_user", String.class)).isEqualTo(PostgresTestDatabase.RUNTIME_ROLE);
+        JdbcTemplate runtime = PostgresTestDatabase.runtime();
+
+        assertThatThrownBy(() -> runtime.update(
+                "update sc_cmp_evidence.compliance_screening set decision = 'FAIL' where transaction_id = 'PAY-RUNTIME'"))
+            .hasMessageContaining("permission denied for table compliance_screening");
+        assertThatThrownBy(() -> runtime.update(
+                "delete from sc_cmp_evidence.compliance_screening where transaction_id = 'PAY-RUNTIME'"))
+            .hasMessageContaining("permission denied for table compliance_screening");
+        assertThatThrownBy(() -> runtime.execute("truncate sc_cmp_evidence.compliance_screening"))
+            .hasMessageContaining("permission denied for table compliance_screening");
+        assertThatThrownBy(() -> runtime.execute(
+                "alter table sc_cmp_evidence.compliance_screening disable trigger tr_compliance_screening_insert_only"))
+            .hasMessageContaining("must be owner of table compliance_screening");
+        assertThatThrownBy(() -> runtime.execute(
+                "drop trigger tr_compliance_screening_insert_only on sc_cmp_evidence.compliance_screening"))
+            .hasMessageContaining("must be owner of table compliance_screening");
+        assertThatThrownBy(() -> runtime.execute("truncate sc_cmp_evidence.legacy_compliance_report"))
+            .hasMessageContaining("permission denied for table legacy_compliance_report");
+        assertThatThrownBy(() -> runtime.execute("create table sc_cmp_evidence.shadow (id int)"))
+            .hasMessageContaining("permission denied for schema sc_cmp_evidence");
+
+        assertThat(runtime.queryForObject(
+                "select decision from sc_cmp_evidence.compliance_screening where transaction_id = 'PAY-RUNTIME'", String.class))
+            .isEqualTo("PASS");
     }
 
     private int outboxRows() {
