@@ -78,8 +78,8 @@ class OutboxRelayTest {
         assertThat(first.getPublishedAt()).isEqualTo(NOW);
         assertThat(second.getPublishedAt()).isNull();
         assertThat(second.getParkedAt()).as("a retriable failure is retried, not parked").isNull();
-        assertThat(second.getAttempts()).isEqualTo(1);
-        assertThat(second.getLastError()).startsWith("NotEnoughReplicasException");
+        assertThat(second.getAttempts()).as("a non-payload failure marks nothing on the row").isZero();
+        assertThat(second.getLastError()).isNull();
         assertThat(third.getAttempts()).isZero();
         verify(kafka, times(2)).send(any(ProducerRecord.class));
     }
@@ -105,7 +105,7 @@ class OutboxRelayTest {
 
         assertThat(relay.relayOnce()).isZero();
         assertThat(relayTimeout.getParkedAt()).isNull();
-        assertThat(relayTimeout.getLastError()).startsWith("TimeoutException");
+        assertThat(relayTimeout.getLastError()).isNull();
         verify(kafka, times(2)).send(any(ProducerRecord.class));
     }
 
@@ -177,20 +177,6 @@ class OutboxRelayTest {
         assertStopsTheBatchWithoutParking(new org.apache.kafka.common.errors.UnknownTopicOrPartitionException("not yet created"));
     }
 
-    @Test
-    void anAuthorisationFailurePastTheCeilingParksTheRow() {
-        OutboxEventJpaEntity stuck = row("CMP-1");
-        stuck.markFailed("TopicAuthorizationException", NOW.minus(PARK_AFTER).minusSeconds(1));
-        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
-        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(stuck));
-        when(kafka.send(any(ProducerRecord.class)))
-            .thenReturn(CompletableFuture.failedFuture(new TopicAuthorizationException(Set.of("evt.cmp.compliance.screened.v1"))));
-
-        relay.relayOnce();
-
-        assertThat(stuck.getParkedAt()).isEqualTo(NOW);
-    }
-
     private void assertStopsTheBatchWithoutParking(Exception failure) {
         OutboxEventJpaEntity head = row("CMP-1");
         OutboxEventJpaEntity next = row("CMP-2");
@@ -201,8 +187,9 @@ class OutboxRelayTest {
         assertThat(relay.relayOnce()).isZero();
 
         assertThat(head.getParkedAt()).as("the failing row").isNull();
-        assertThat(head.getAttempts()).isEqualTo(1);
-        assertThat(head.getFirstFailedAt()).isEqualTo(NOW);
+        assertThat(head.getAttempts()).isZero();
+        assertThat(head.getLastError()).isNull();
+        assertThat(head.getFirstFailedAt()).isNull();
         assertThat(next.getParkedAt()).as("the next row").isNull();
         assertThat(next.getAttempts()).as("the next row is not tried").isZero();
         verify(kafka, times(1)).send(any(ProducerRecord.class));
@@ -225,7 +212,7 @@ class OutboxRelayTest {
             clock.advance(BACKOFF_MAX);
         }
 
-        assertThat(head.getAttempts()).isEqualTo(20).isGreaterThan(MAX_ATTEMPTS);
+        assertThat(head.getAttempts()).as("nothing is written to the row").isZero();
         assertThat(head.getParkedAt()).isNull();
         verify(kafka, times(20)).send(any(ProducerRecord.class));
     }
@@ -288,38 +275,6 @@ class OutboxRelayTest {
     }
 
     @Test
-    void aRetriableFailureAtTheCeilingIsStillRetried() {
-        OutboxEventJpaEntity head = row("CMP-1");
-        head.markFailed("NotEnoughReplicasException", NOW.minus(PARK_AFTER));
-        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
-        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(head, row("CMP-2")));
-        when(kafka.send(any(ProducerRecord.class)))
-            .thenReturn(CompletableFuture.failedFuture(new NotEnoughReplicasException("broker unavailable")));
-
-        assertThat(relay.relayOnce()).isZero();
-
-        assertThat(head.getParkedAt()).isNull();
-        assertThat(head.getFirstFailedAt()).as("measured from the first failure").isEqualTo(NOW.minus(PARK_AFTER));
-    }
-
-    @Test
-    void aRetriableFailurePastTheCeilingParksTheRowAndTheNextRowIsPublished() {
-        OutboxEventJpaEntity stuck = row("CMP-1");
-        stuck.markFailed("NotEnoughReplicasException", NOW.minus(PARK_AFTER).minusSeconds(1));
-        OutboxEventJpaEntity next = row("CMP-2");
-        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
-        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(stuck, next));
-        when(kafka.send(any(ProducerRecord.class)))
-            .thenReturn(CompletableFuture.failedFuture(new NotEnoughReplicasException("still out of sync")))
-            .thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
-
-        assertThat(relay.relayOnce()).isEqualTo(1);
-
-        assertThat(stuck.getParkedAt()).isEqualTo(NOW);
-        assertThat(next.getPublishedAt()).isEqualTo(NOW);
-    }
-
-    @Test
     void aNonRetriableFailureParksAtOnceOnTheFirstAttempt() {
         OutboxEventJpaEntity invalid = row("CMP-1");
         when(outbox.tryRelayLock(anyLong())).thenReturn(true);
@@ -330,8 +285,66 @@ class OutboxRelayTest {
         relay.relayOnce();
 
         assertThat(invalid.getAttempts()).isEqualTo(1);
-        assertThat(invalid.getFirstFailedAt()).isEqualTo(NOW);
+        assertThat(invalid.getFirstFailedAt()).as("first_failed_at is no longer written").isNull();
         assertThat(invalid.getParkedAt()).isEqualTo(NOW);
+    }
+
+    @Test
+    void aRetriableOrAuthorisationFailureLastingMoreThan24HoursIsNeverParkedAndTheNextRowIsNotSent() {
+        for (Exception failure : List.<Exception>of(new NotEnoughReplicasException("broker unavailable"),
+                new TopicAuthorizationException(Set.of("evt.cmp.compliance.screened.v1")),
+                new SaslAuthenticationException("IAM credentials expired"))) {
+            org.mockito.Mockito.reset(outbox, kafka);
+            OutboxEventJpaEntity head = row("CMP-1");
+            OutboxEventJpaEntity next = row("CMP-2");
+            when(outbox.tryRelayLock(anyLong())).thenReturn(true);
+            when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(head, next));
+            when(kafka.send(any(ProducerRecord.class))).thenAnswer(call -> CompletableFuture.failedFuture(failure));
+
+            Instant start = clock.instant();
+            while (clock.instant().isBefore(start.plus(Duration.ofHours(25)))) {
+                relay.relayOnce();
+                clock.advance(Duration.ofMinutes(1));
+            }
+
+            assertThat(head.getParkedAt()).as(failure.getClass().getSimpleName()).isNull();
+            assertThat(next.getParkedAt()).isNull();
+            assertThat(head.getAttempts()).as("nothing is written to the failing row").isZero();
+            assertThat(head.getFirstFailedAt()).isNull();
+            assertThat(next.getAttempts()).as("the next row is never sent").isZero();
+            verify(kafka, org.mockito.Mockito.atLeast(5 * 60)).send(any(ProducerRecord.class));
+        }
+    }
+
+    /**
+     * ADR-021 decision 4 (governance reading): a non-payload failure breaks the
+     * batch without marking the row. No attempts, first_failed_at or last_error
+     * write; the error goes to the log and the outbox.send.failures counter only.
+     */
+    @Test
+    void aNonPayloadFailureMarksNothingOnTheRow() {
+        for (Exception failure : List.<Exception>of(new NotEnoughReplicasException("broker unavailable"),
+                new TimeoutException("Topic not present in metadata"),
+                new TopicAuthorizationException(Set.of("evt.cmp.compliance.screened.v1")),
+                new SaslAuthenticationException("IAM credentials expired"),
+                new org.apache.kafka.common.KafkaException("unclassified"),
+                new IllegalStateException("producer closed"))) {
+            org.mockito.Mockito.reset(outbox, kafka);
+            clock.advance(BACKOFF_MAX);
+            OutboxEventJpaEntity head = row("CMP-1");
+            when(outbox.tryRelayLock(anyLong())).thenReturn(true);
+            when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(head, row("CMP-2")));
+            when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.failedFuture(failure));
+
+            assertThat(relay.relayOnce()).isZero();
+
+            String name = failure.getClass().getSimpleName();
+            assertThat(head.getAttempts()).as(name + " attempts").isZero();
+            assertThat(head.getLastError()).as(name + " last_error").isNull();
+            assertThat(head.getFirstFailedAt()).as(name + " first_failed_at").isNull();
+            assertThat(head.getParkedAt()).as(name + " parked_at").isNull();
+            assertThat(head.getPublishedAt()).as(name + " published_at").isNull();
+        }
     }
 
     @Test
@@ -372,7 +385,8 @@ class OutboxRelayTest {
         } finally {
             Thread.interrupted();
         }
-        assertThat(first.getLastError()).isEqualTo("interrupted");
+        assertThat(first.getLastError()).isNull();
+        assertThat(first.getAttempts()).isZero();
         assertThat(first.getPublishedAt()).isNull();
         verify(kafka, times(1)).send(any(ProducerRecord.class));
     }
