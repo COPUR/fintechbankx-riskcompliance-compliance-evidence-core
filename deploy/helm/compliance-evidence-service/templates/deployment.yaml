@@ -21,6 +21,9 @@ spec:
     metadata:
       labels:
         {{- include "compliance.selectorLabels" . | nindent 8 }}
+        # Mesh membership labels required by the platform contract.
+        app: {{ .Values.serviceAccount.name }}
+        version: {{ .Values.image.tag | quote }}
         {{- toYaml .Values.podLabels | nindent 8 }}
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}

@@ -55,6 +55,8 @@ spring:
         jwt:
           issuer-uri: ${OIDC_ISSUER_URI:http://localhost:8180/realms/fintechbankx}
           jwk-set-uri: ${OIDC_JWK_SET_URI:http://localhost:8180/realms/fintechbankx/protocol/openid-connect/certs}
+          # Tokens must be issued for this service (Keycloak audience mapper on the caller's client).
+          audiences: ${OIDC_AUDIENCE:svc-cmp-evidence}
 
 server:
   port: 8080
@@ -86,6 +88,12 @@ management:
   observations:
     key-values:
       service: svc-cmp-evidence
+
+security:
+  dpop:
+    # true once every caller sends DPoP-bound tokens; bound tokens are always checked.
+    required: ${DPOP_REQUIRED:false}
+    proof-window: PT60S
 
 compliance:
   outbox:

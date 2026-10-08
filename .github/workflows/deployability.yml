@@ -38,6 +38,12 @@ jobs:
         run: |
           chart=deploy/helm/compliance-evidence-service
           args="--set image.repository=ci/compliance-evidence-service --set image.tag=${{ github.sha }} --set externalSecret.remoteSecretName=ci/db-app"
+          args="$args --set config.DB_URL=jdbc:postgresql://ci:5432/db --set config.KAFKA_BOOTSTRAP_SERVERS=ci:9098"
+          args="$args --set config.OIDC_ISSUER_URI=https://ci/realms/fintechbankx --set config.OIDC_JWK_SET_URI=https://ci/certs"
+          # Empty required settings must fail the render, not produce pods that cannot start.
+          if helm template ci "$chart" --set image.repository=ci/x --set image.tag=x --set externalSecret.remoteSecretName=ci/db-app > /dev/null 2>&1; then
+            echo "chart rendered without required runtime config"; exit 1
+          fi
           helm lint "$chart" $args
           helm template ci "$chart" $args > /dev/null
           helm template ci "$chart" -f "$chart/values-dev.yaml" $args > /dev/null

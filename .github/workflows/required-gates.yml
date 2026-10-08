@@ -73,6 +73,8 @@ jobs:
       TEST_DB_URL: jdbc:postgresql://localhost:5432/db_cmp_evidence_test
       TEST_DB_USERNAME: compliance_test
       TEST_DB_PASSWORD: compliance_test
+      # Fail, rather than skip, the integration tests if the database is missing.
+      REQUIRE_TEST_DB: "true"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -90,13 +92,14 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Run tests
+      - name: Run tests and coverage gates
         shell: bash
         run: |
           if [ -f build.gradle ] || [ -f settings.gradle ] || [ -f gradlew ]; then
             GRADLE=gradle
             if [ -x ./gradlew ]; then GRADLE=./gradlew; fi
-            if ! $GRADLE --no-daemon test; then
+            # check = tests + jacoco coverage verification (platform CI default).
+            if ! $GRADLE --no-daemon check; then
               if [ -f .ci/allow-gradle-fail ]; then
                 echo "Gradle test failed but .ci/allow-gradle-fail is present; continuing."
               else

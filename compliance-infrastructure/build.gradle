@@ -30,20 +30,21 @@ jacoco {
     toolVersion = '0.8.14'
 }
 
-// The JPA adapter and Spring configuration are covered by compliance-bootstrap's
-// integration tests against Postgres; this module gates the unit-testable code.
+// The gate covers every adapter. JPA adapters and Spring wiring are exercised
+// by compliance-bootstrap's PostgreSQL integration tests, so their execution
+// data counts here too: ./gradlew check needs TEST_DB_URL (CI) or Docker.
 def complianceInfrastructureCoverageIncludes = [
-    'com/bank/compliance/infrastructure/config/ComplianceConfiguration*',
-    'com/bank/compliance/infrastructure/config/OutboxConfiguration*',
-    'com/bank/compliance/infrastructure/config/TransactionalComplianceScreening*',
+    'com/bank/compliance/infrastructure/config/**',
     'com/bank/compliance/infrastructure/outbox/**',
-    'com/bank/compliance/infrastructure/persistence/InMemoryComplianceResultRepository*',
-    'com/bank/compliance/infrastructure/persistence/ComplianceScreeningPersistenceMapper*',
+    'com/bank/compliance/infrastructure/persistence/**',
+    'com/bank/compliance/infrastructure/security/**',
     'com/bank/compliance/infrastructure/web/**'
 ]
+def bootstrapTestExecution = project(':compliance-bootstrap').layout.buildDirectory.file('jacoco/test.exec')
 
 jacocoTestReport {
-    dependsOn test
+    dependsOn test, ':compliance-bootstrap:test'
+    executionData.from(bootstrapTestExecution)
     reports {
         xml.required = true
         html.required = true
@@ -58,6 +59,7 @@ jacocoTestReport {
 
 jacocoTestCoverageVerification {
     dependsOn jacocoTestReport
+    executionData.from(bootstrapTestExecution)
     afterEvaluate {
         classDirectories.setFrom(files(classDirectories.files.collect { dir ->
             fileTree(dir: dir, include: complianceInfrastructureCoverageIncludes)

@@ -29,12 +29,13 @@ resources:
   limits:
     memory: 1Gi
 
+# CPU only: the JVM keeps committed heap, so a memory target would pin the
+# deployment at maxReplicas and block scale-down.
 autoscaling:
   enabled: true
   minReplicas: 3
   maxReplicas: 12
   targetCPUUtilizationPercentage: 65
-  targetMemoryUtilizationPercentage: 80
 
 podDisruptionBudget:
   minAvailable: 2
@@ -51,6 +52,8 @@ config:
   SPRING_PROFILES_ACTIVE: msk
   OIDC_ISSUER_URI: ""
   OIDC_JWK_SET_URI: ""
+  OIDC_AUDIENCE: svc-cmp-evidence
+  DPOP_REQUIRED: "false"           # internal callers are bound by mesh mTLS (platform contract)
   # Transactional outbox relay to evt.cmp.compliance.screened.v1. Every replica
   # runs it; a Postgres advisory lock lets one publish at a time.
   OUTBOX_RELAY_ENABLED: "true"

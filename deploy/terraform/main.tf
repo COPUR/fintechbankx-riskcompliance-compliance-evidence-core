@@ -40,6 +40,10 @@ resource "aws_kms_key" "database" {
   description             = "Encrypts ${local.database} storage, snapshots, logs and credentials"
   enable_key_rotation     = true
   deletion_window_in_days = 30
+
+  # The platform External Secrets Operator role may decrypt only keys with
+  # this tag (platform contract, secrets addendum).
+  tags = merge(local.tags, { "fintechbankx.io/secrets" = "true" })
 }
 
 resource "aws_kms_alias" "database" {
@@ -114,6 +118,12 @@ resource "aws_rds_cluster" "database" {
     min_capacity = var.aurora_min_capacity
     max_capacity = var.aurora_max_capacity
   }
+
+  # Minor versions are upgraded by AWS in the maintenance window; the
+  # variable sets the version at creation and major upgrades only.
+  lifecycle {
+    ignore_changes = [engine_version]
+  }
 }
 
 resource "aws_rds_cluster_instance" "database" {
@@ -122,7 +132,6 @@ resource "aws_rds_cluster_instance" "database" {
   cluster_identifier                    = aws_rds_cluster.database.id
   instance_class                        = "db.serverless"
   engine                                = aws_rds_cluster.database.engine
-  engine_version                        = aws_rds_cluster.database.engine_version
   db_subnet_group_name                  = aws_db_subnet_group.database.name
   publicly_accessible                   = false
   auto_minor_version_upgrade            = true
@@ -136,7 +145,8 @@ resource "aws_rds_cluster_instance" "database" {
 # sc_cmp_evidence). The DBA bootstrap in docs/migration creates the role
 # and writes {"username", "password"} here; Terraform never sees the value.
 resource "aws_secretsmanager_secret" "app_database" {
-  name                    = "${local.name}/db-app"
+  # <env>/<service-slug>/...: the only path the platform ESO role may read.
+  name                    = "${var.environment}/${local.service_slug}/db-app"
   description             = "Application database credential for ${local.service_id}"
   kms_key_id              = aws_kms_key.database.arn
   recovery_window_in_days = 7
@@ -172,50 +182,31 @@ resource "aws_iam_role" "workload" {
   assume_role_policy = data.aws_iam_policy_document.irsa_trust.json
 }
 
+# The pods reach AWS only for Kafka: the database credential arrives through
+# External Secrets Operator, which reads it with its own platform role.
 data "aws_iam_policy_document" "workload" {
-  statement {
-    sid       = "ReadOwnDatabaseCredential"
-    actions   = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
-    resources = [aws_secretsmanager_secret.app_database.arn, module.service_base.secret_arn]
-  }
+  count = var.msk_cluster_arn == "" ? 0 : 1
 
+  # MSK IAM client auth (SASL_SSL / AWS_MSK_IAM): the outbox relay connects
+  # (idempotent producer) and may only write this service's own event namespace.
   statement {
-    sid       = "DecryptOwnDatabaseCredential"
-    actions   = ["kms:Decrypt"]
-    resources = [aws_kms_key.database.arn]
+    sid       = "ConnectToEventCluster"
+    actions   = ["kafka-cluster:Connect", "kafka-cluster:DescribeCluster", "kafka-cluster:WriteDataIdempotently"]
+    resources = [var.msk_cluster_arn]
   }
 
   statement {
-    sid       = "ReadOwnParameters"
-    actions   = ["ssm:GetParameter", "ssm:GetParametersByPath"]
-    resources = ["arn:aws:ssm:${var.aws_region}:*:parameter/fintechbankx/${var.environment}/${local.service_slug}/*"]
-  }
-
-  # Outbox relay producer on Amazon MSK with IAM auth: connect to the cluster
-  # and write only to this service's evt.cmp.compliance.* topics.
-  dynamic "statement" {
-    for_each = var.msk_cluster_arn == "" ? [] : [var.msk_cluster_arn]
-    content {
-      sid       = "ConnectToMsk"
-      actions   = ["kafka-cluster:Connect", "kafka-cluster:DescribeCluster", "kafka-cluster:WriteDataIdempotently"]
-      resources = [statement.value]
-    }
-  }
-
-  dynamic "statement" {
-    for_each = var.msk_cluster_arn == "" ? [] : [var.msk_cluster_arn]
-    content {
-      sid       = "WriteOwnComplianceTopics"
-      actions   = ["kafka-cluster:WriteData", "kafka-cluster:DescribeTopic"]
-      resources = ["${replace(statement.value, ":cluster/", ":topic/")}/evt.cmp.compliance.*"]
-    }
+    sid       = "WriteOwnEventNamespace"
+    actions   = ["kafka-cluster:DescribeTopic", "kafka-cluster:WriteData"]
+    resources = ["${replace(var.msk_cluster_arn, ":cluster/", ":topic/")}/evt.cmp.compliance.*"]
   }
 }
 
 resource "aws_iam_role_policy" "workload" {
+  count  = var.msk_cluster_arn == "" ? 0 : 1
   name   = "${local.name}-least-privilege"
   role   = aws_iam_role.workload.id
-  policy = data.aws_iam_policy_document.workload.json
+  policy = data.aws_iam_policy_document.workload[0].json
 }
 
 # --- Alarms -----------------------------------------------------------------

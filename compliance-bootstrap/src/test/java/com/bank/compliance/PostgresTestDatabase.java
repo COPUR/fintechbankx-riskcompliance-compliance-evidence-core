@@ -17,8 +17,14 @@ final class PostgresTestDatabase {
     private PostgresTestDatabase() {
     }
 
-    /** Call from a static @BeforeAll so the class is skipped, not failed, without a database. */
+    /**
+     * Call from a static @BeforeAll so the class is skipped, not failed, without
+     * a database; CI sets REQUIRE_TEST_DB=true so a missing database fails it.
+     */
     static void assumeAvailable() {
+        if ("true".equalsIgnoreCase(System.getenv("REQUIRE_TEST_DB")) && !hasExternalDatabase()) {
+            throw new IllegalStateException("REQUIRE_TEST_DB is set but TEST_DB_URL is empty");
+        }
         Assumptions.assumeTrue(hasExternalDatabase() || DockerClientFactory.instance().isDockerAvailable(),
             "Set TEST_DB_URL or start Docker to run PostgreSQL integration tests");
     }
