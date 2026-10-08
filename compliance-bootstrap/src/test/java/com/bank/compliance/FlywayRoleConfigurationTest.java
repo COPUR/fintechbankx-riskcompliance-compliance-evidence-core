@@ -42,6 +42,21 @@ class FlywayRoleConfigurationTest {
         assertThat(flyway.getPlaceholders()).containsEntry("runtime_role", "compliance_evidence_app");
     }
 
+    /**
+     * Aurora TLS (cicd-templates 4f0f266): the chart and Terraform verify DB_URL
+     * (sslmode=verify-full). Flyway must have no URL of its own, so the migration
+     * owner connects through DB_URL as well and cannot bypass that check.
+     */
+    @Test
+    void flywayHasNoUrlOfItsOwnAndConnectsThroughDbUrl() throws Exception {
+        FlywayProperties flyway = flyway(Map.of(
+            "DB_URL", "jdbc:postgresql://aurora:5432/db_cmp_evidence_prod?sslmode=verify-full",
+            "DB_MIGRATION_USERNAME", "compliance_evidence_owner",
+            "DB_MIGRATION_PASSWORD", "owner-secret"));
+
+        assertThat(flyway.getUrl()).isNull();
+    }
+
     private static FlywayProperties flyway(Map<String, Object> podEnv) throws Exception {
         List<PropertySource<?>> documents = new YamlPropertySourceLoader()
             .load("application.yml", new ClassPathResource("application.yml"));
