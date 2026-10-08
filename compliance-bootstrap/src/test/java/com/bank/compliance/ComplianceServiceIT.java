@@ -351,6 +351,29 @@ class ComplianceServiceIT {
         assertThat(relay.relayOnce()).isZero();
     }
 
+    /** The runbook's manual park is counted once by the relay, as OperatorPark, never twice. */
+    @Test
+    void anOperatorParkIsCountedExactlyOnce() throws Exception {
+        screen("PAY-OPPARK-1", "C-1", "10.00", false, true, false).andExpect(status().isCreated());
+        String screeningId = jdbc.queryForObject(
+            "select screening_id from sc_cmp_evidence.compliance_screening where transaction_id = 'PAY-OPPARK-1'", String.class);
+        jdbc.update("""
+            update sc_cmp_evidence.outbox_event
+            set parked_at = now(), last_error = 'manual: topic will not be granted'
+            where published_at is null and parked_at is null and aggregate_id = ?
+            """, screeningId);
+        io.micrometer.core.instrument.simple.SimpleMeterRegistry meters = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
+            Clock.systemUTC(), 100, Duration.ofSeconds(5), Duration.ofDays(7), 10, Duration.ofSeconds(1), Duration.ofMinutes(5), meters);
+
+        relay.relayOnce();
+        relay.relayOnce();
+
+        assertThat(meters.get("outbox.parked.events").tag("exception", "OperatorPark").counter().count()).isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+            "select park_counted from sc_cmp_evidence.outbox_event where aggregate_id = ?", Boolean.class, screeningId)).isTrue();
+    }
+
     /**
      * A parked row is skipped by the relay, counted by the parked gauge and
      * sent again once the runbook's un-park statement clears parked_at.

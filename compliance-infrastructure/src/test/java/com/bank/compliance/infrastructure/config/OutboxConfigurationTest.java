@@ -39,9 +39,9 @@ class OutboxConfigurationTest {
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
         when(outbox.countByPublishedAtIsNullAndParkedAtIsNotNull()).thenReturn(2L);
 
-        configuration.outboxParkedEventsGauge(registry, outbox);
+        configuration.outboxParkedRowsGauge(registry, outbox);
 
-        Gauge gauge = registry.get("outbox.parked.events").tag("service", "svc-cmp-evidence").gauge();
+        Gauge gauge = registry.get("outbox.parked.rows").tag("service", "svc-cmp-evidence").gauge();
         assertThat(gauge.value()).isEqualTo(2.0);
     }
 

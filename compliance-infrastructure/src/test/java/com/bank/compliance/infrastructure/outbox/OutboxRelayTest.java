@@ -346,6 +346,38 @@ class OutboxRelayTest {
         }
     }
 
+    /** Platform ruling: outbox.parked.events counts each parked row once, tagged with the root cause. */
+    @Test
+    void aRelayParkIsCountedOnceWithTheRootCauseClassAndMarkedCounted() {
+        OutboxEventJpaEntity tooLarge = row("CMP-1");
+        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(tooLarge)).thenReturn(List.of());
+        when(kafka.send(any(ProducerRecord.class)))
+            .thenReturn(CompletableFuture.failedFuture(new RecordTooLargeException("too large")));
+
+        relay.relayOnce();
+        relay.relayOnce();
+
+        assertThat(tooLarge.getParkedAt()).isEqualTo(NOW);
+        assertThat(tooLarge.isParkCounted()).as("written with the park, so the operator sweep skips it").isTrue();
+        assertThat(meters.get("outbox.parked.events").tag("exception", "RecordTooLargeException").counter().count())
+            .isEqualTo(1);
+        assertThat(meters.get("outbox.parked.events").counter().getId().getTags())
+            .extracting(io.micrometer.core.instrument.Tag::getKey).containsExactly("exception");
+    }
+
+    @Test
+    void anOperatorParkIsCountedExactlyOnceAsOperatorPark() {
+        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of());
+        when(outbox.markUncountedParksCounted()).thenReturn(1).thenReturn(0);
+
+        relay.relayOnce();
+        relay.relayOnce();
+
+        assertThat(meters.get("outbox.parked.events").tag("exception", "OperatorPark").counter().count()).isEqualTo(1);
+    }
+
     @Test
     void lastErrorFitsTheColumn() {
         OutboxEventJpaEntity row = row("CMP-1");
