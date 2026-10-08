@@ -2,6 +2,7 @@ package com.bank.compliance.infrastructure.config;
 
 import com.bank.compliance.domain.ComplianceDecision;
 import com.bank.compliance.domain.ComplianceResult;
+import com.bank.compliance.domain.ComplianceResultFixtures;
 import com.bank.compliance.domain.command.ComplianceScreeningCommand;
 import com.bank.compliance.domain.port.in.ComplianceScreeningUseCase;
 import org.junit.jupiter.api.Test;
@@ -29,11 +30,11 @@ class TransactionalComplianceScreeningTest {
             new TransactionalComplianceScreening(delegate, readWrite, readOnly);
 
     private final ComplianceScreeningCommand command =
-            new ComplianceScreeningCommand("TX-TX", "C-1", new BigDecimal("10.00"), false, true, false);
+            new ComplianceScreeningCommand("TX-TX", "C-1", new BigDecimal("10.00"), "AED", false, true, false);
 
     @Test
     void screeningRunsInsideTheReadWriteTransaction() {
-        ComplianceResult result = ComplianceResult.create("TX-TX", "C-1", ComplianceDecision.PASS, List.of("COMPLIANT"));
+        ComplianceResult result = ComplianceResultFixtures.result("TX-TX", "C-1", ComplianceDecision.PASS, List.of("COMPLIANT"));
         when(delegate.screen(command)).thenAnswer(inv -> {
             assertThat(readWrite.active).as("delegate runs inside the transaction").isTrue();
             return result;

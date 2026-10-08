@@ -11,8 +11,10 @@ public record ComplianceResultSnapshot(
         ComplianceResultId id,
         String transactionId,
         String customerId,
+        ScreeningFacts facts,
         ComplianceDecision decision,
         List<String> reasons,
+        String ruleSetVersion,
         Instant checkedAt
 ) {
 }

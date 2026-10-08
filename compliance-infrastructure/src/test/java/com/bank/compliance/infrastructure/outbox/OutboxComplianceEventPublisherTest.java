@@ -2,6 +2,7 @@ package com.bank.compliance.infrastructure.outbox;
 
 import com.bank.compliance.domain.ComplianceDecision;
 import com.bank.compliance.domain.ComplianceResult;
+import com.bank.compliance.domain.ComplianceResultFixtures;
 import com.bank.compliance.infrastructure.web.CorrelationIdFilter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
@@ -31,7 +32,7 @@ class OutboxComplianceEventPublisherTest {
     @Test
     void writesOneRowWithTheRequestCorrelationId() {
         MDC.put(CorrelationIdFilter.MDC_KEY, "corr-req");
-        ComplianceResult result = ComplianceResult.create("PAY-1", "C-1", ComplianceDecision.PASS, List.of("COMPLIANT"));
+        ComplianceResult result = ComplianceResultFixtures.result("PAY-1", "C-1", ComplianceDecision.PASS, List.of("COMPLIANT"));
 
         publisher.publish(result.screenedEvent());
 
@@ -44,7 +45,7 @@ class OutboxComplianceEventPublisherTest {
 
     @Test
     void eventsRaisedOutsideARequestGetAFreshCorrelationId() {
-        ComplianceResult result = ComplianceResult.create("PAY-2", "C-1", ComplianceDecision.PASS, List.of("COMPLIANT"));
+        ComplianceResult result = ComplianceResultFixtures.result("PAY-2", "C-1", ComplianceDecision.PASS, List.of("COMPLIANT"));
 
         publisher.publish(result.screenedEvent());
 

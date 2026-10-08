@@ -21,33 +21,50 @@ repository), following the strangler-fig steps of `fbx-monolith-extraction`.
 | `customers`, `loans` | `svc-cus-profile-kyc`, `svc-ln-loan-lifecycle` | never copied here; `customer_id` is the caller's id, kept as text |
 | Open-finance `compliance_reports` MongoDB collection | open-finance services | consent analytics, a different concept; not moved |
 
-Flyway migrations: `compliance-infrastructure/src/main/resources/db/migration/V1__create_compliance_screening.sql`, `V2__create_legacy_compliance_report.sql`, `V3__create_outbox.sql`. The service never reads monolith tables and the monolith must not read `sc_cmp_evidence`.
+Flyway migrations: `compliance-infrastructure/src/main/resources/db/migration/V1__create_compliance_screening.sql`, `V2__create_legacy_compliance_report.sql`, `V3__create_outbox.sql`, `V4__make_compliance_screening_insert_only.sql`. The service never reads monolith tables and the monolith must not read `sc_cmp_evidence`.
+
+Screening results store the facts they were decided on (amount, currency, sanctions/KYC/PEP flags, rule set version) and `attestation_source = CALLER_ATTESTED`: the flags come from the caller ([decision 0001](../architecture/decisions/0001-screening-facts-are-caller-attested.md)).
+
+### Database roles (DBA bootstrap)
+
+| Role | Used by | Privileges |
+|---|---|---|
+| migration owner (e.g. `compliance_evidence_owner`) | Flyway only | owns `sc_cmp_evidence` and its objects |
+| `compliance_evidence_app` (runtime, `DB_USERNAME`) | the service | `USAGE` on the schema; `SELECT, INSERT` on `compliance_screening` (no `UPDATE`, `DELETE`, `TRUNCATE`); `SELECT, INSERT, UPDATE, DELETE` on `outbox_event` (the relay marks and purges rows); `SELECT` on `legacy_compliance_report` |
+| backfill role | `db/backfill/run-backfill.sh` | `CREATE` on the database (staging schema); `SELECT, INSERT, UPDATE, DELETE` on `legacy_compliance_report` only |
+
+`compliance_screening` is insert-only evidence: besides the grants, the `tr_compliance_screening_insert_only` trigger (V4) refuses `UPDATE` and `DELETE` from every role, the owner included. Any future retention purge needs its own reviewed migration.
+
+Today the service runs Flyway at startup, so the runtime role and the migration owner are the same unless the DBA bootstrap runs Flyway separately; separating them (Flyway as an init job with the owner credential, `spring.flyway.enabled=false` in the pods) is a follow-up before production.
 
 ## 2. Backfill and reconciliation
 
 `db/backfill/run-backfill.sh "<monolith conninfo>" "<compliance service conninfo>"`
 
 1. Exports `compliance_reports` in one read-only snapshot.
-2. Stages them in `backfill_stage` and upserts them into `legacy_compliance_report` (`02_transform_into_compliance_service.sql`). Every column is kept. Reports still move through review and submission in the monolith until cut-over, so a re-run refreshes rows already copied.
-3. Compares report counts and the loan, amount and findings totals with the monolith, and lists any staged report whose copy differs (`03_reconcile.sql`). Any difference fails the run.
+2. Stages them in `backfill_stage` and upserts them into `legacy_compliance_report` (`02_transform_into_compliance_service.sql`). Every column is kept. Reports still move through review and submission in the monolith until cut-over, so a re-run refreshes rows already copied, and a report deleted in the monolith is deleted from the copy (legacy copy only; screening evidence is never touched). An empty export against a non-empty copy is refused.
+3. Compares report counts and the loan, amount and findings totals with the monolith, and lists any staged report whose copy differs and any copied report the monolith no longer has (`03_reconcile.sql`). Any difference fails the run.
 
-The backfill is independent of the other contexts' backfills and idempotent. `scripts/migration/verify-backfill.sh` rehearses it on a scratch PostgreSQL (two runs, then a workflow change in the source and a third run) and runs in CI (`deploy/data-split-rehearsal`).
+The backfill is independent of the other contexts' backfills and idempotent. `scripts/migration/verify-backfill.sh` rehearses it on a scratch PostgreSQL (two runs, a workflow change in the source and a third run, a deletion in the source and a fourth run, and an empty export that must be refused) and runs in CI (`deploy/data-split-rehearsal`).
+
+**Report files are not migrated.** `report_file_path` is copied as text, but the files it points to (generated report documents in the monolith's storage) are not moved. Before step 3 the squad needs a plan: copy the files to this service's storage (an S3 bucket owned by `svc-cmp-evidence`, KMS-encrypted, retention per regulation) and rewrite the paths, or keep them where they are with read access documented. Until then the paths in `legacy_compliance_report` point into monolith storage.
 
 ## 3. Cutover plan
 
 | Step | Action | Rollback |
 |---|---|---|
-| 1 | Deploy the service with `OUTBOX_RELAY_ENABLED=false` until topic `evt.cmp.compliance.screened.v1` exists on MSK; run the backfill; reconcile | drop `sc_cmp_evidence`, nothing else changed |
+| 1 | Deploy the service with `OUTBOX_RELAY_ENABLED=false` (override the chart default `"true"`) until topics `evt.cmp.compliance.screened.v1` and `evt.cmp.compliance.dlq.v1` exist on MSK and `msk_cluster_arn` is set; run the backfill; reconcile | drop `sc_cmp_evidence`, nothing else changed |
 | 2 | Payments call `POST /api/v1/compliance/screen` with the payment id as `transactionId` and a client-credentials token (`SERVICE` role), behind a flag | flag off; payments keep their local checks |
-| 3 | Monolith stops writing `compliance_reports`; run the backfill a last time | monolith table is still intact |
+| 3 | **Only when** report generation and the review/submission workflow run in `svc-cmp-evidence` (not yet built) **and** the report-file plan above is done: monolith stops writing `compliance_reports`; run the backfill a last time. Until then the monolith stays the writer and the backfill keeps re-running as a mirror | monolith table is still intact |
 | 4 | After the next regulatory reporting cycle: drop the monolith table | restore from snapshot |
-| 5 | Enable the outbox relay (`OUTBOX_RELAY_ENABLED=true`); consumers subscribe to `evt.cmp.compliance.screened.v1` | relay off; events stay in the outbox and are sent in order once it is back on |
+| 5 | Once the topics exist: enable the outbox relay (`OUTBOX_RELAY_ENABLED=true`, the chart default); consumers subscribe to `evt.cmp.compliance.screened.v1` | relay off; events stay in the outbox and are sent in order once it is back on |
 
 ## 4. Acceptance checklist
 
 - [x] Service builds and tests standalone (`ci/build`, `ci/test`, including PostgreSQL integration tests)
 - [x] Own schema and migrations; Hibernate validates the entity at startup
-- [x] One result per transaction: retries return the stored result, a reused id for another customer is a 409
+- [x] One result per transaction: replays (same customer, same facts) return the stored result; a reused id for another customer or with any different fact is a 409; screening rows are insert-only (trigger, grants)
+- [x] Screened facts, rule set version and attestation source stored with each result
 - [x] Screening results readable by compliance officers and auditors; customers cannot screen or read
 - [x] Compliance report backfill rehearsed with reconciliation in CI
 - [x] Container image, Helm chart, Terraform validate in CI (`Deployability` workflow)
@@ -55,5 +72,7 @@ The backfill is independent of the other contexts' backfills and idempotent. `sc
 - [x] Screening events written through a transactional outbox in the screening's transaction; one event per new screening, none on retries or when a concurrent duplicate loses (`ComplianceServiceIT`); screening inputs not published
 - [ ] AsyncAPI catalog mirror updated from `api/asyncapi/svc-cmp-evidence.yaml` (provider copy changes `screeningId` from `format: uuid` to the `CMP-<uuid>` pattern)
 - [ ] Topic `evt.cmp.compliance.screened.v1` and its DLQ created on the platform cluster; IRSA `msk_cluster_arn` set
-- [ ] Report generation moved here (today only the history is migrated)
+- [ ] Report generation and the review/submission workflow moved here (precondition for step 3; today only the history is mirrored)
+- [ ] Plan for report files at `report_file_path` (not migrated)
+- [ ] Separate migration owner from the runtime role (Flyway as an init job)
 - [ ] Production backfill and reconciliation report attached here

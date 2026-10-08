@@ -6,10 +6,28 @@
 -- submission workflow in the monolith until cut-over, so a re-run refreshes
 -- rows already copied instead of skipping them; nothing in this service
 -- writes these rows, so the monolith stays the source of truth until then.
+--
+-- legacy_compliance_report is a mirror of the monolith table until cut-over,
+-- so a report deleted in the monolith is deleted from the copy too (this
+-- touches only legacy_compliance_report, never compliance_screening). An
+-- empty export against a non-empty copy is refused instead of wiping it: it
+-- almost always means the wrong source database.
 
 \set ON_ERROR_STOP on
 
 BEGIN;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM backfill_stage.compliance_reports)
+       AND EXISTS (SELECT 1 FROM sc_cmp_evidence.legacy_compliance_report) THEN
+        RAISE EXCEPTION 'monolith export is empty but legacy_compliance_report has rows; refusing to delete them';
+    END IF;
+END
+$$;
+
+DELETE FROM sc_cmp_evidence.legacy_compliance_report t
+ WHERE NOT EXISTS (SELECT 1 FROM backfill_stage.compliance_reports s WHERE s.report_id = t.report_id);
 
 INSERT INTO sc_cmp_evidence.legacy_compliance_report (
     report_id, report_type, generation_date, reporting_period_start, reporting_period_end, total_loans, total_amount, high_risk_loans, compliance_score, regulatory_findings, findings_details, report_data, report_file_path, generated_by, reviewed_by, review_date, status, submission_date, regulator_reference, next_report_due, created_at, updated_at, version)

@@ -7,6 +7,7 @@ import jakarta.persistence.Table;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 
@@ -28,6 +29,27 @@ public class ComplianceScreeningJpaEntity {
     @Column(name = "customer_id", nullable = false, length = 128, updatable = false)
     private String customerId;
 
+    @Column(name = "amount", nullable = false, precision = 19, scale = 4, updatable = false)
+    private BigDecimal amount;
+
+    @Column(name = "currency", nullable = false, length = 3, updatable = false)
+    private String currency;
+
+    @Column(name = "sanctions_hit", nullable = false, updatable = false)
+    private boolean sanctionsHit;
+
+    @Column(name = "kyc_verified", nullable = false, updatable = false)
+    private boolean kycVerified;
+
+    @Column(name = "pep", nullable = false, updatable = false)
+    private boolean pep;
+
+    @Column(name = "attestation_source", nullable = false, length = 32, updatable = false)
+    private String attestationSource;
+
+    @Column(name = "rule_set_version", nullable = false, length = 64, updatable = false)
+    private String ruleSetVersion;
+
     @Column(name = "decision", nullable = false, length = 16, updatable = false)
     private String decision;
 
@@ -41,11 +63,20 @@ public class ComplianceScreeningJpaEntity {
     protected ComplianceScreeningJpaEntity() {
     }
 
-    ComplianceScreeningJpaEntity(String screeningId, String transactionId, String customerId, String decision,
-                                 List<String> reasons, Instant checkedAt) {
+    ComplianceScreeningJpaEntity(String screeningId, String transactionId, String customerId,
+                                 BigDecimal amount, String currency, boolean sanctionsHit, boolean kycVerified,
+                                 boolean pep, String attestationSource, String decision, List<String> reasons,
+                                 String ruleSetVersion, Instant checkedAt) {
         this.screeningId = screeningId;
         this.transactionId = transactionId;
         this.customerId = customerId;
+        this.amount = amount;
+        this.currency = currency;
+        this.sanctionsHit = sanctionsHit;
+        this.kycVerified = kycVerified;
+        this.pep = pep;
+        this.attestationSource = attestationSource;
+        this.ruleSetVersion = ruleSetVersion;
         this.decision = decision;
         this.reasons = reasons;
         this.checkedAt = checkedAt;
@@ -54,6 +85,13 @@ public class ComplianceScreeningJpaEntity {
     public String getScreeningId() { return screeningId; }
     public String getTransactionId() { return transactionId; }
     public String getCustomerId() { return customerId; }
+    public BigDecimal getAmount() { return amount; }
+    public String getCurrency() { return currency; }
+    public boolean isSanctionsHit() { return sanctionsHit; }
+    public boolean isKycVerified() { return kycVerified; }
+    public boolean isPep() { return pep; }
+    public String getAttestationSource() { return attestationSource; }
+    public String getRuleSetVersion() { return ruleSetVersion; }
     public String getDecision() { return decision; }
     public List<String> getReasons() { return reasons; }
     public Instant getCheckedAt() { return checkedAt; }

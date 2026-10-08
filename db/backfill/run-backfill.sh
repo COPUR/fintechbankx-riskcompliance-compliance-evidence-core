@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Copies regulatory compliance reports from the monolith database into
 # svc-cmp-evidence's own database and reconciles the two. Re-runnable: a
-# re-run refreshes reports the monolith changed since the last run.
+# re-run refreshes reports the monolith changed since the last run and
+# removes copies of reports the monolith deleted.
 #
 #   db/backfill/run-backfill.sh <monolith-conninfo> <compliance-service-conninfo>
 #

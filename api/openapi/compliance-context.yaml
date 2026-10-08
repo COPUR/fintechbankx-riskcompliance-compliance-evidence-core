@@ -11,8 +11,16 @@ paths:
       summary: Run compliance screening
       operationId: screenCompliance
       description: |-
-        Screens once per transactionId. A retry for the same customer returns
-        the stored result; the same transactionId for another customer is a 409.
+        Screens once per transactionId and stores the decision with the facts it
+        was made on (amount, currency, sanctions/KYC/PEP flags, rule set
+        version) as insert-only evidence. A replay (same customer and the same
+        facts) returns the stored result; the same transactionId for another
+        customer or with any different fact is a 409 TRANSACTION_ALREADY_SCREENED.
+        A concurrent first screening of the same transaction may get a 409
+        DUPLICATE_REQUEST; retrying returns the stored result.
+
+        The flags and amount are attested by the caller: the service does not
+        look them up yet (see `attestation` on the response).
       security:
         - bearerAuth: []
           dpopAuth: []
@@ -52,7 +60,16 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '409':
-          description: Transaction already screened for another customer
+          description: >-
+            TRANSACTION_ALREADY_SCREENED (transactionId already screened for
+            another customer or with different facts) or DUPLICATE_REQUEST (a
+            concurrent screening of the same transaction won; retry).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: INTERNAL_ERROR; the screening could not be stored.
           content:
             application/json:
               schema:
@@ -137,11 +154,21 @@ components:
       properties:
         transactionId:
           type: string
+          description: Caller's id of the screened transaction, at most 128 characters.
         customerId:
           type: string
+          description: Customer id, at most 128 characters.
         amount:
           type: number
           format: double
+          description: >-
+            Positive amount with at most 15 integer digits and 4 decimal places
+            (stored as NUMERIC(19,4)); otherwise 400 INVALID_REQUEST.
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+          default: AED
+          description: ISO 4217 code of the amount, upper case. Optional; AED when absent.
         sanctionsHit:
           type: boolean
         kycVerified:
@@ -168,6 +195,14 @@ components:
         checkedAt:
           type: string
           format: date-time
+        attestation:
+          type: string
+          description: >-
+            Where the screening facts came from. CALLER_ATTESTED: the sanctions,
+            PEP and KYC flags and the amount were stated by the calling service
+            and not verified by compliance. Further values may be added;
+            consumers must accept values they do not know.
+          example: CALLER_ATTESTED
     ErrorResponse:
       type: object
       required: [code, message, interactionId, timestamp]

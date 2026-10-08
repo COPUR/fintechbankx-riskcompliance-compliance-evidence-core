@@ -11,7 +11,8 @@ public record ComplianceScreeningResponse(
         String customerId,
         String decision,
         List<String> reasons,
-        Instant checkedAt
+        Instant checkedAt,
+        String attestation
 ) {
     public static ComplianceScreeningResponse from(ComplianceResult result) {
         return new ComplianceScreeningResponse(
@@ -20,7 +21,8 @@ public record ComplianceScreeningResponse(
                 result.getCustomerId(),
                 result.getDecision().name(),
                 result.getReasons(),
-                result.getCheckedAt()
+                result.getCheckedAt(),
+                result.getAttestation().name()
         );
     }
 }

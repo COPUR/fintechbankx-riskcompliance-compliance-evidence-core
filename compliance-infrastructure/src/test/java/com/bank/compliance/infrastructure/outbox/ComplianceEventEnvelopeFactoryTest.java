@@ -2,6 +2,7 @@ package com.bank.compliance.infrastructure.outbox;
 
 import com.bank.compliance.domain.ComplianceDecision;
 import com.bank.compliance.domain.ComplianceResult;
+import com.bank.compliance.domain.ComplianceResultFixtures;
 import com.bank.compliance.domain.ComplianceResultId;
 import com.bank.compliance.domain.ComplianceResultSnapshot;
 import com.bank.compliance.domain.ComplianceScreenedEvent;
@@ -29,7 +30,8 @@ class ComplianceEventEnvelopeFactoryTest {
 
     private static ComplianceScreenedEvent screened(ComplianceDecision decision, List<String> reasons) {
         return ComplianceResult.rehydrate(new ComplianceResultSnapshot(ComplianceResultId.of(SCREENING_ID),
-                "PAY-77", "C-42", decision, reasons, CHECKED_AT)).screenedEvent();
+                "PAY-77", "C-42", ComplianceResultFixtures.facts(), decision, reasons, "cmp-screening-rules-v1", CHECKED_AT))
+                .screenedEvent();
     }
 
     @Test

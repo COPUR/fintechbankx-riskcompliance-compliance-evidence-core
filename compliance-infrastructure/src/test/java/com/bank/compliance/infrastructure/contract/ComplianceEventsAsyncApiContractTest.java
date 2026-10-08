@@ -2,6 +2,7 @@ package com.bank.compliance.infrastructure.contract;
 
 import com.bank.compliance.domain.ComplianceDecision;
 import com.bank.compliance.domain.ComplianceResult;
+import com.bank.compliance.domain.ComplianceResultFixtures;
 import com.bank.compliance.infrastructure.outbox.ComplianceEventEnvelopeFactory;
 import com.bank.compliance.infrastructure.outbox.OutboxEventJpaEntity;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -34,7 +35,7 @@ class ComplianceEventsAsyncApiContractTest {
         Map<String, Object> envelopeSchema = (Map<String, Object>) load("common/event-envelope.yaml").get("EventEnvelope");
         Map<String, Object> dataSchema = path(contract, "components", "schemas", "ComplianceScreenedData");
 
-        ComplianceResult result = ComplianceResult.create("PAY-CT-1", "C-1", ComplianceDecision.REVIEW,
+        ComplianceResult result = ComplianceResultFixtures.result("PAY-CT-1", "C-1", ComplianceDecision.REVIEW,
                 List.of("PEP_HIGH_VALUE_REVIEW"));
         OutboxEventJpaEntity row = new ComplianceEventEnvelopeFactory(json).toOutboxRow(result.screenedEvent(), "corr-ct");
         JsonNode envelope = json.readTree(row.getPayload());

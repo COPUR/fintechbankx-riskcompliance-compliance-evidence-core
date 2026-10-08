@@ -17,7 +17,7 @@ class ComplianceScreenedEventTest {
     private static ComplianceResult stored(ComplianceDecision decision, List<String> reasons) {
         return ComplianceResult.rehydrate(new ComplianceResultSnapshot(
                 ComplianceResultId.of("CMP-0b9d1c5e-3f4a-4d8e-9a71-2c6f0e5b7d10"),
-                "PAY-77", "C-42", decision, reasons, CHECKED_AT));
+                "PAY-77", "C-42", ComplianceResultFixtures.facts(), decision, reasons, "cmp-screening-rules-v1", CHECKED_AT));
     }
 
     @Test

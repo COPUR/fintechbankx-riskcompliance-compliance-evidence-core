@@ -10,6 +10,12 @@ import java.util.List;
 
 public class ComplianceRuleService {
 
+    /**
+     * Version of the rules below, stored with every result so evidence shows
+     * which rules decided it. Change it whenever a rule or threshold changes.
+     */
+    public static final String RULE_SET_VERSION = "cmp-screening-rules-v1";
+
     public ComplianceResult screen(ComplianceScreeningCommand command) {
         List<String> reasons = new ArrayList<>();
 
@@ -18,8 +24,10 @@ public class ComplianceRuleService {
             return ComplianceResult.create(
                     command.transactionId(),
                     command.customerId(),
+                    command.facts(),
                     ComplianceDecision.FAIL,
-                    reasons
+                    reasons,
+                    RULE_SET_VERSION
             );
         }
 
@@ -28,8 +36,10 @@ public class ComplianceRuleService {
             return ComplianceResult.create(
                     command.transactionId(),
                     command.customerId(),
+                    command.facts(),
                     ComplianceDecision.FAIL,
-                    reasons
+                    reasons,
+                    RULE_SET_VERSION
             );
         }
 
@@ -38,8 +48,10 @@ public class ComplianceRuleService {
             return ComplianceResult.create(
                     command.transactionId(),
                     command.customerId(),
+                    command.facts(),
                     ComplianceDecision.REVIEW,
-                    reasons
+                    reasons,
+                    RULE_SET_VERSION
             );
         }
 
@@ -47,8 +59,10 @@ public class ComplianceRuleService {
         return ComplianceResult.create(
                 command.transactionId(),
                 command.customerId(),
+                command.facts(),
                 ComplianceDecision.PASS,
-                reasons
+                reasons,
+                RULE_SET_VERSION
         );
     }
 }

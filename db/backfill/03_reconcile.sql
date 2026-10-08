@@ -1,6 +1,7 @@
 -- Step 3 of the compliance report data split, run by run-backfill.sh against
 -- the COMPLIANCE SERVICE database. Row 1 holds totals compared with the
--- monolith; any further row is a staged report whose copy differs from it.
+-- monolith; any further row is a staged report whose copy differs from it,
+-- or a copied report that no longer exists in the monolith.
 
 \set ON_ERROR_STOP on
 
@@ -19,4 +20,9 @@ SELECT s.report_id
        IS DISTINCT FROM
        (t.report_type, t.status, t.total_loans, t.total_amount, t.high_risk_loans, t.compliance_score,
         t.regulatory_findings, t.findings_details, t.report_data, t.submission_date, t.regulator_reference)
- ORDER BY s.report_id;
+UNION ALL
+SELECT t.report_id || ' (not in monolith)'
+  FROM sc_cmp_evidence.legacy_compliance_report t
+  LEFT JOIN backfill_stage.compliance_reports s USING (report_id)
+ WHERE s.report_id IS NULL
+ ORDER BY 1;

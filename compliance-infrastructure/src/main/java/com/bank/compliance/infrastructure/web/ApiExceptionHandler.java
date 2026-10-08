@@ -1,6 +1,9 @@
 package com.bank.compliance.infrastructure.web;
 
 import com.bank.compliance.application.TransactionAlreadyScreenedException;
+import com.bank.compliance.domain.ScreeningAlreadyRecordedException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
@@ -19,15 +22,31 @@ import java.time.Instant;
 @RestControllerAdvice
 public class ApiExceptionHandler {
 
+    private static final Logger log = LoggerFactory.getLogger(ApiExceptionHandler.class);
+
     @ExceptionHandler(TransactionAlreadyScreenedException.class)
     ResponseEntity<ErrorResponse> alreadyScreened(TransactionAlreadyScreenedException ex) {
         return error(HttpStatus.CONFLICT, "TRANSACTION_ALREADY_SCREENED", ex.getMessage());
     }
 
-    /** Two concurrent first screenings of one transaction: the database lets one through. */
-    @ExceptionHandler(DataIntegrityViolationException.class)
-    ResponseEntity<ErrorResponse> duplicate(DataIntegrityViolationException ex) {
+    /**
+     * Two concurrent first screenings of one transaction: the unique
+     * transaction_id constraint let the other one through. A retry returns
+     * its result (or a 409 TRANSACTION_ALREADY_SCREENED if the facts differ).
+     */
+    @ExceptionHandler(ScreeningAlreadyRecordedException.class)
+    ResponseEntity<ErrorResponse> duplicate(ScreeningAlreadyRecordedException ex) {
         return error(HttpStatus.CONFLICT, "DUPLICATE_REQUEST", "This transaction is already being screened; retry");
+    }
+
+    /**
+     * Any other integrity failure means a request passed validation but not a
+     * database constraint: a defect, not a client error. Details stay in the log.
+     */
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    ResponseEntity<ErrorResponse> integrityFailure(DataIntegrityViolationException ex) {
+        log.error("Screening could not be stored", ex);
+        return error(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", "The screening could not be stored");
     }
 
     @ExceptionHandler({IllegalArgumentException.class, MethodArgumentNotValidException.class,

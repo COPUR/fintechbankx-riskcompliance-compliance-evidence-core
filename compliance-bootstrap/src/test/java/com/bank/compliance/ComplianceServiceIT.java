@@ -2,8 +2,7 @@ package com.bank.compliance;
 
 import com.bank.compliance.domain.ComplianceDecision;
 import com.bank.compliance.domain.ComplianceResult;
-import com.bank.compliance.domain.command.ComplianceScreeningCommand;
-import com.bank.compliance.domain.port.in.ComplianceScreeningUseCase;
+import com.bank.compliance.domain.ComplianceResultFixtures;
 import com.bank.compliance.domain.port.out.ComplianceEventPublisher;
 import com.bank.compliance.infrastructure.outbox.OutboxRelay;
 import com.bank.compliance.infrastructure.outbox.SpringDataOutboxRepository;
@@ -19,7 +18,6 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -42,7 +40,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -82,7 +79,6 @@ class ComplianceServiceIT {
 
     @Autowired MockMvc mvc;
     @Autowired JdbcTemplate jdbc;
-    @Autowired ComplianceScreeningUseCase screening;
     @Autowired ComplianceEventPublisher eventPublisher;
     @Autowired SpringDataOutboxRepository outbox;
     @Autowired PlatformTransactionManager transactionManager;
@@ -90,8 +86,8 @@ class ComplianceServiceIT {
 
     @BeforeEach
     void cleanTables() {
-        jdbc.update("delete from sc_cmp_evidence.outbox_event");
-        jdbc.update("delete from sc_cmp_evidence.compliance_screening");
+        // TRUNCATE: screening rows are insert-only (row-level DELETE is refused by a trigger).
+        jdbc.execute("truncate sc_cmp_evidence.outbox_event, sc_cmp_evidence.compliance_screening");
     }
 
     @Test
@@ -184,11 +180,12 @@ class ComplianceServiceIT {
     /**
      * Two first screenings of one transaction race: the other one holds an
      * uncommitted insert, so ours finds nothing, evaluates and blocks on the
-     * unique transaction_id index. When the other commits, our insert fails and
-     * our whole transaction rolls back: no second result and no outbox row.
+     * unique transaction_id index. When the other commits, our insert fails,
+     * the client gets 409 DUPLICATE_REQUEST and our whole transaction rolls
+     * back: no second result and no outbox row.
      */
     @Test
-    void losingAConcurrentFirstScreeningLeavesNoOutboxRow() throws Exception {
+    void losingAConcurrentFirstScreeningIsADuplicateRequestAndLeavesNoOutboxRow() throws Exception {
         CountDownLatch otherInserted = new CountDownLatch(1);
         CountDownLatch commitOther = new CountDownLatch(1);
         ExecutorService threads = Executors.newFixedThreadPool(2);
@@ -196,23 +193,24 @@ class ComplianceServiceIT {
             Future<?> other = threads.submit(() -> new TransactionTemplate(transactionManager).executeWithoutResult(tx -> {
                 jdbc.update("""
                     insert into sc_cmp_evidence.compliance_screening
-                        (screening_id, transaction_id, customer_id, decision, reasons, checked_at)
-                    values ('CMP-race-winner', 'PAY-RACE', 'C-1', 'PASS', '["COMPLIANT"]'::jsonb, now())
+                        (screening_id, transaction_id, customer_id, amount, currency, sanctions_hit, kyc_verified, pep,
+                         attestation_source, decision, reasons, rule_set_version, checked_at)
+                    values ('CMP-race-winner', 'PAY-RACE', 'C-1', 10.00, 'AED', false, true, false,
+                            'CALLER_ATTESTED', 'PASS', '["COMPLIANT"]'::jsonb, 'cmp-screening-rules-v1', now())
                     """);
                 otherInserted.countDown();
                 await(commitOther);
             }));
             assertThat(otherInserted.await(10, TimeUnit.SECONDS)).isTrue();
 
-            Future<ComplianceResult> ours = threads.submit(() -> screening.screen(
-                new ComplianceScreeningCommand("PAY-RACE", "C-1", new BigDecimal("10.00"), false, true, false)));
+            Future<ResultActions> ours = threads.submit(() -> screen("PAY-RACE", "C-1", "10.00", false, true, false));
             waitUntilABackendIsBlockedOnALock();
             commitOther.countDown();
             other.get(10, TimeUnit.SECONDS);
 
-            assertThatThrownBy(() -> ours.get(10, TimeUnit.SECONDS))
-                .isInstanceOf(ExecutionException.class)
-                .hasCauseInstanceOf(DataIntegrityViolationException.class);
+            ours.get(10, TimeUnit.SECONDS)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("DUPLICATE_REQUEST"));
         } finally {
             commitOther.countDown();
             threads.shutdownNow();
@@ -222,11 +220,70 @@ class ComplianceServiceIT {
             "select screening_id from sc_cmp_evidence.compliance_screening where transaction_id = 'PAY-RACE'", String.class))
             .containsExactly("CMP-race-winner");
         assertThat(outboxRows()).isZero();
+        // The loser's retry is a replay of the winner's facts and gets the stored result.
+        screen("PAY-RACE", "C-1", "10", false, true, false)
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.screeningId").value("CMP-race-winner"));
+    }
+
+    @Test
+    void replayWithAFlippedSanctionsFlagIsRefusedAndTheEvidenceIsUnchanged() throws Exception {
+        screen("PAY-FLIP", "C-1", "500.00", false, true, false)
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.decision").value("PASS"));
+
+        screen("PAY-FLIP", "C-1", "500.00", true, true, false)
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("TRANSACTION_ALREADY_SCREENED"));
+        screen("PAY-FLIP", "C-1", "500.01", false, true, false)
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("TRANSACTION_ALREADY_SCREENED"));
+
+        assertThat(jdbc.queryForMap("select decision, sanctions_hit from sc_cmp_evidence.compliance_screening where transaction_id = 'PAY-FLIP'"))
+            .containsEntry("decision", "PASS").containsEntry("sanctions_hit", false);
+        assertThat(outboxRows()).isEqualTo(1);
+    }
+
+    @Test
+    void screenedFactsAreStoredAsEvidenceButNotPublished() throws Exception {
+        mvc.perform(asService(post("/api/v1/compliance/screen"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"transactionId": "PAY-FACTS", "customerId": "C-5", "amount": 12000.5, "currency": "USD",
+                     "sanctionsHit": false, "kycVerified": true, "pep": true}
+                    """))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.attestation").value("CALLER_ATTESTED"));
+
+        assertThat(jdbc.queryForMap("""
+                select amount::text as amount, currency, sanctions_hit, kyc_verified, pep, attestation_source, rule_set_version
+                from sc_cmp_evidence.compliance_screening where transaction_id = 'PAY-FACTS'
+                """))
+            .containsEntry("amount", "12000.5000").containsEntry("currency", "USD")
+            .containsEntry("sanctions_hit", false).containsEntry("kyc_verified", true).containsEntry("pep", true)
+            .containsEntry("attestation_source", "CALLER_ATTESTED").containsEntry("rule_set_version", "cmp-screening-rules-v1");
+        String payload = jdbc.queryForObject("select payload::text from sc_cmp_evidence.outbox_event", String.class);
+        assertThat(payload).doesNotContain("12000", "USD", "sanctions", "kyc", "\"pep\"", "CALLER_ATTESTED");
+    }
+
+    @Test
+    void screeningEvidenceCannotBeUpdatedOrDeleted() throws Exception {
+        screen("PAY-LOCKED", "C-1", "10.00", false, true, false).andExpect(status().isCreated());
+
+        assertThatThrownBy(() -> jdbc.update(
+                "update sc_cmp_evidence.compliance_screening set decision = 'FAIL' where transaction_id = 'PAY-LOCKED'"))
+            .hasMessageContaining("insert-only evidence; UPDATE refused");
+        assertThatThrownBy(() -> jdbc.update(
+                "delete from sc_cmp_evidence.compliance_screening where transaction_id = 'PAY-LOCKED'"))
+            .hasMessageContaining("insert-only evidence; DELETE refused");
+        assertThat(jdbc.queryForObject(
+            "select decision from sc_cmp_evidence.compliance_screening where transaction_id = 'PAY-LOCKED'", String.class))
+            .isEqualTo("PASS");
     }
 
     @Test
     void outboxPublisherRefusesToWriteOutsideATransaction() {
-        ComplianceResult result = ComplianceResult.create("PAY-NO-TX", "C-1", ComplianceDecision.PASS, List.of("COMPLIANT"));
+        ComplianceResult result = ComplianceResultFixtures.result("PAY-NO-TX", "C-1", ComplianceDecision.PASS, List.of("COMPLIANT"));
 
         assertThatThrownBy(() -> eventPublisher.publish(result.screenedEvent()))
             .isInstanceOf(IllegalTransactionStateException.class);

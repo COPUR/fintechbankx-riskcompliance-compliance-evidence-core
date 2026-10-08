@@ -6,20 +6,29 @@ import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
+/**
+ * The recorded outcome of screening one transaction: the decision, its
+ * reasons, the facts it was made on and the rule set that made it. Evidence:
+ * written once, never changed.
+ */
 public final class ComplianceResult {
     private final ComplianceResultId id;
     private final String transactionId;
     private final String customerId;
+    private final ScreeningFacts facts;
     private final ComplianceDecision decision;
     private final List<String> reasons;
+    private final String ruleSetVersion;
     private final Instant checkedAt;
 
     private ComplianceResult(
             ComplianceResultId id,
             String transactionId,
             String customerId,
+            ScreeningFacts facts,
             ComplianceDecision decision,
             List<String> reasons,
+            String ruleSetVersion,
             Instant checkedAt
     ) {
         this.id = Objects.requireNonNull(id, "id is required");
@@ -31,6 +40,11 @@ public final class ComplianceResult {
         }
         this.transactionId = transactionId;
         this.customerId = customerId;
+        this.facts = Objects.requireNonNull(facts, "facts are required");
+        if (ruleSetVersion == null || ruleSetVersion.isBlank()) {
+            throw new IllegalArgumentException("ruleSetVersion is required");
+        }
+        this.ruleSetVersion = ruleSetVersion;
         this.decision = Objects.requireNonNull(decision, "decision is required");
         this.reasons = List.copyOf(Objects.requireNonNull(reasons, "reasons are required"));
         this.checkedAt = Objects.requireNonNull(checkedAt, "checkedAt is required");
@@ -39,15 +53,19 @@ public final class ComplianceResult {
     public static ComplianceResult create(
             String transactionId,
             String customerId,
+            ScreeningFacts facts,
             ComplianceDecision decision,
-            List<String> reasons
+            List<String> reasons,
+            String ruleSetVersion
     ) {
         return new ComplianceResult(
                 ComplianceResultId.generate(),
                 transactionId,
                 customerId,
+                facts,
                 decision,
                 reasons,
+                ruleSetVersion,
                 // Microseconds: the precision the evidence is stored with, so a retry
                 // returns exactly the timestamp the first response carried.
                 Instant.now().truncatedTo(ChronoUnit.MICROS)
@@ -64,18 +82,22 @@ public final class ComplianceResult {
                 snapshot.id(),
                 snapshot.transactionId(),
                 snapshot.customerId(),
+                snapshot.facts(),
                 snapshot.decision(),
                 snapshot.reasons(),
+                snapshot.ruleSetVersion(),
                 snapshot.checkedAt()
         );
     }
 
     /**
-     * True when a repeated screening request for this transaction is for the
-     * same customer, so the stored result can be returned for it.
+     * True when a repeated screening request for this transaction is a replay
+     * of the recorded one: same customer and the same facts. Only then may the
+     * stored result be returned for it; anything else would hand out evidence
+     * for facts that were never screened.
      */
-    public boolean isFor(String otherCustomerId) {
-        return customerId.equals(otherCustomerId);
+    public boolean isReplayOf(String otherCustomerId, ScreeningFacts otherFacts) {
+        return customerId.equals(otherCustomerId) && facts.sameFactsAs(otherFacts);
     }
 
     /**
@@ -97,6 +119,18 @@ public final class ComplianceResult {
 
     public String getCustomerId() {
         return customerId;
+    }
+
+    public ScreeningFacts getFacts() {
+        return facts;
+    }
+
+    public AttestationSource getAttestation() {
+        return facts.attestation();
+    }
+
+    public String getRuleSetVersion() {
+        return ruleSetVersion;
     }
 
     public ComplianceDecision getDecision() {

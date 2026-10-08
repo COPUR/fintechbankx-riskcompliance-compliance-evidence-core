@@ -33,8 +33,9 @@ public class ComplianceScreeningService implements ComplianceScreeningUseCase {
     public ComplianceResult screen(ComplianceScreeningCommand command) {
         Optional<ComplianceResult> existing = repository.findByTransactionId(command.transactionId());
         if (existing.isPresent()) {
-            // Retries get the recorded result; a reused id for another customer is refused.
-            if (!existing.get().isFor(command.customerId())) {
+            // A replay (same customer, same facts) gets the recorded result; anything
+            // else under this transaction id is refused and the evidence is kept.
+            if (!existing.get().isReplayOf(command.customerId(), command.facts())) {
                 throw new TransactionAlreadyScreenedException(command.transactionId());
             }
             return existing.get();

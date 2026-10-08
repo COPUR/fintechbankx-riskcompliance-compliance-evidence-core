@@ -5,6 +5,7 @@ description = 'Compliance Application - Use cases for screening orchestration'
 dependencies {
     api project(':compliance-domain')
 
+    testImplementation testFixtures(project(':compliance-domain'))
     testImplementation libs.junit.jupiter
     testImplementation libs.assertj.core
     testImplementation libs.mockito.core

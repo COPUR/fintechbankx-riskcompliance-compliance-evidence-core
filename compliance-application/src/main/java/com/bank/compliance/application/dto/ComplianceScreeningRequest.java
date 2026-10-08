@@ -4,19 +4,28 @@ import com.bank.compliance.domain.command.ComplianceScreeningCommand;
 
 import java.math.BigDecimal;
 
+/**
+ * Screening request. The flags and amount are attested by the caller.
+ * {@code currency} is optional for callers written before it existed and
+ * defaults to AED (the platform's home currency); the domain validates it.
+ */
 public record ComplianceScreeningRequest(
         String transactionId,
         String customerId,
         BigDecimal amount,
+        String currency,
         boolean sanctionsHit,
         boolean kycVerified,
         boolean pep
 ) {
+    public static final String DEFAULT_CURRENCY = "AED";
+
     public ComplianceScreeningCommand toCommand() {
         return new ComplianceScreeningCommand(
                 transactionId,
                 customerId,
                 amount,
+                currency == null ? DEFAULT_CURRENCY : currency,
                 sanctionsHit,
                 kycVerified,
                 pep
