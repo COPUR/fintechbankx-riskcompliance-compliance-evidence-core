@@ -47,7 +47,15 @@ jobs:
           helm lint "$chart" $args
           helm template ci "$chart" $args > /dev/null
           helm template ci "$chart" -f "$chart/values-dev.yaml" $args > /dev/null
-          helm template ci "$chart" $args | grep -q "kind: NetworkPolicy"
+          rendered="$(helm template ci "$chart" $args)"
+          grep -q "kind: NetworkPolicy" <<<"$rendered"
+          # Platform contract: mesh policy belongs to the service-mesh repo, secrets to the one ClusterSecretStore.
+          if grep -qE "kind: (PeerAuthentication|AuthorizationPolicy|SecretStore)$" <<<"$rendered"; then
+            echo "chart must not ship mesh policies or its own SecretStore" >&2
+            exit 1
+          fi
+          grep -q "name: aws-secrets-manager" <<<"$rendered"
+          grep -q "app: compliance-evidence-service" <<<"$rendered"
           helm template ci "$chart" $args --set kafkaClientTls.enabled=true --set config.SPRING_PROFILES_ACTIVE=kafka-strimzi > /dev/null
 
   terraform:
