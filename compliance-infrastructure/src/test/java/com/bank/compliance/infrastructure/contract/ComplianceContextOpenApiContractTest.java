@@ -40,6 +40,19 @@ class ComplianceContextOpenApiContractTest {
         assertThat((Map<String, Object>) parameters.get("Authorization")).containsEntry("required", true);
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    void sanctionsAndPepFlagsAreRequiredWithoutADefault() throws IOException {
+        Map<String, Object> spec = new Yaml().load(loadSpec());
+        Map<String, Object> schemas = (Map<String, Object>) ((Map<String, Object>) spec.get("components")).get("schemas");
+        Map<String, Object> request = (Map<String, Object>) schemas.get("ComplianceScreeningRequest");
+        Map<String, Object> properties = (Map<String, Object>) request.get("properties");
+
+        assertThat((List<String>) request.get("required")).contains("sanctionsHit", "pep");
+        assertThat((Map<String, Object>) properties.get("sanctionsHit")).doesNotContainKey("default");
+        assertThat((Map<String, Object>) properties.get("pep")).doesNotContainKey("default");
+    }
+
     private static String loadSpec() throws IOException {
         List<Path> candidates = List.of(
                 Path.of("api/openapi/compliance-context.yaml"),

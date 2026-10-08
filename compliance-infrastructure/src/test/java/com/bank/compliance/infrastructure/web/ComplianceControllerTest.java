@@ -135,6 +135,24 @@ class ComplianceControllerTest {
                 """, "currency must be an upper-case ISO 4217 code");
     }
 
+    /** Omitted or null sanctionsHit / pep must never be stored as a caller-attested false. */
+    @Test
+    void omittedOrNullSanctionsAndPepFlagsAreA400AndNothingIsScreened() throws Exception {
+        expectInvalid("""
+                {"transactionId":"TX-9","customerId":"C1","amount":10,"currency":"USD","kycVerified":true,"pep":false}
+                """, "sanctionsHit is required");
+        expectInvalid("""
+                {"transactionId":"TX-9","customerId":"C1","amount":10,"currency":"USD","sanctionsHit":null,"kycVerified":true,"pep":false}
+                """, "sanctionsHit is required");
+        expectInvalid("""
+                {"transactionId":"TX-9","customerId":"C1","amount":10,"currency":"USD","sanctionsHit":false,"kycVerified":true}
+                """, "pep is required");
+        expectInvalid("""
+                {"transactionId":"TX-9","customerId":"C1","amount":10,"currency":"USD","sanctionsHit":false,"kycVerified":true,"pep":null}
+                """, "pep is required");
+        org.mockito.Mockito.verify(service, org.mockito.Mockito.never()).screen(any());
+    }
+
     @Test
     void responseStatesThatTheFactsWereCallerAttested() throws Exception {
         ComplianceResult result = ComplianceResultFixtures.result("TX-8", "C1", ComplianceDecision.PASS, List.of("COMPLIANT"));
