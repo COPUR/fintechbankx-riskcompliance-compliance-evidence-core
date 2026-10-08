@@ -89,21 +89,32 @@ After a run that stopped on a failure the relay backs off: it waits
 to `backoff-max` (`PT5M`), and resets after a run that does not stop. The
 backoff is held in memory by the relay, not on the row.
 
-Alerts route to the owning squad, `squad="compliance"` (Risk and Compliance
-Decisioning Squad). Platform builds one rule per service on these metric names;
-every meter carries the common tags `app` (the chart's service account,
-`compliance-evidence-service`) and `squad`. Platform's observability repository
-owns the alert rules; the chart ships no PrometheusRule. The platform alert, by
-expression, and the supporting queries:
+Alerts (PROPOSED to platform observability,
+fintechbankx-platform-observability-sre-operations; no such rule exists there
+yet, on main or in PR #11). Platform owns the rules; the chart ships no
+PrometheusRule. Platform's outbox rules select on the `service_id` label,
+scraped from the pod label `fintechbankx.io/service-id` (the chart sets
+`svc-cmp-evidence`; the deployability job asserts it). Owning squad:
+`compliance` (Risk and Compliance Decisioning Squad).
 
 ```promql
-# the relay is stalled (outage, credentials, ACL) or off: the backlog waits, it is not lost
-max(outbox_oldest_pending_age_seconds{app="compliance-evidence-service", squad="compliance"}) > 900
-# rows that need a decision
-max(outbox_parked_events{app="compliance-evidence-service", squad="compliance"}) > 0
-# what is failing, by exception class
-sum by (exception) (rate(outbox_send_failures_total{app="compliance-evidence-service", squad="compliance"}[5m])) > 0
+# Proposed rule: the relay is stalled (outage, credentials, ACL) or off; the backlog waits, it is not lost.
+# for: 5m, severity: critical, squad: compliance
+max(outbox_oldest_pending_age_seconds{service_id="svc-cmp-evidence"}) > 900
+
+# Proposed companion: failed sends in the last 10 minutes (by exception class in the dashboard).
+# squad: compliance
+increase(outbox_send_failures_total{service_id="svc-cmp-evidence"}[10m]) > 0
+
+# Supporting query: rows that need a decision.
+max(outbox_parked_events{service_id="svc-cmp-evidence"}) > 0
 ```
+
+Dependency: PR #11's AMP remote-write keep regex `.*outbox_pending.*` drops
+both `outbox_oldest_pending_age_seconds` and `outbox_send_failures_total`; it
+must be widened to `outbox_.*` before either rule can fire. Every meter also
+carries the common tags `app` (`compliance-evidence-service`) and `squad`
+(`compliance`).
 
 Two replicas never send the same row: the relay holds a PostgreSQL
 advisory lock for its run (`ComplianceServiceIT.twoRelaysRunningConcurrentlySendEachRowExactlyOnce`).
