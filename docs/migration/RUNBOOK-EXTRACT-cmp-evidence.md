@@ -97,13 +97,13 @@ With the chart's 3 replicas and `backoff-max` 5 min that is about one try
 every 100 s. A cluster-wide backoff (next-attempt time in a relay state
 row) is the alternative if retry load matters.
 
-Alerts (PROPOSED to platform observability until platform's commit lands;
-platform has settled the severities below,
-fintechbankx-platform-observability-sre-operations; no such rule exists there
-yet, on main or in PR #11). Platform owns the rules; the chart ships no
-PrometheusRule. Platform's outbox rules select on the `service_id` label,
-scraped from the pod label `fintechbankx.io/service-id` (the chart sets
-`svc-cmp-evidence`; the deployability job asserts it). Owning squad:
+Alerts: the rules live in platform observability
+(fintechbankx-platform-observability-sre-operations) PR #11 at commit
+`eca7aa0`, not merged yet. Platform owns them; this service ships no alert
+rule and the chart ships no PrometheusRule. All three select on the
+`service_id` label, scraped from the pod label `fintechbankx.io/service-id`
+(the chart sets `svc-cmp-evidence`; the deployability job asserts it), and
+route by squad. Owning squad:
 `compliance` (Risk and Compliance Decisioning Squad). Scraping relies on the
 pod annotations `prometheus.io/scrape`, `prometheus.io/port` (management port)
 and `prometheus.io/path` (`/actuator/prometheus`); the deployability job
@@ -112,24 +112,23 @@ asserts all three.
 ```promql
 # One threshold, used by this rule and by the cut-over rollback trigger: 900 s,
 # three times backoff-max (5 min), so a single maximum backoff never fires it.
-# Proposed rule: the relay is stalled (outage, credentials, ACL) or off; the backlog waits, it is not lost.
+# OutboxRelayStalled: the relay is stalled (outage, credentials, ACL) or off; the backlog waits, it is not lost.
 # for: 5m, severity: critical, squad: compliance
 max(outbox_oldest_pending_age_seconds{service_id="svc-cmp-evidence"}) > 900
 
-# Proposed rule: any failed send in the last 10 minutes (by exception class in the dashboard).
+# OutboxSendFailures: any failed send in the last 10 minutes (by exception class in the dashboard).
 # severity: warning, squad: compliance
 increase(outbox_send_failures_total{service_id="svc-cmp-evidence"}[10m]) > 0
 
-# Parked rows: no rule in this service. Platform's alert OutboxEventsParked fires on
-# any increase of the counter over 15 minutes, no for clause, severity warning, routed
-# by squad with namespace fallback:
-#   increase(outbox_parked_events_total{service_id="svc-cmp-evidence"}[15m]) > 0
+# OutboxEventsParked: any increase of the counter over 15 minutes, no for clause,
+# severity warning, squad: compliance. Operator parks (OperatorPark) also fire it.
+increase(outbox_parked_events_total{service_id="svc-cmp-evidence"}[15m]) > 0
+
 # Current number of parked rows (dashboard): outbox_parked_rows{service_id="svc-cmp-evidence"}
 ```
 
-Dependency: PR #11's AMP remote-write keep regex `.*outbox_pending.*` drops
-both `outbox_oldest_pending_age_seconds` and `outbox_send_failures_total`; it
-must be widened to `outbox_.*` before either rule can fire. Every meter also
+Dependency: PR #11 also widens the AMP remote-write keep regex to the
+`outbox_` series, so these rules can fire once it merges. Every meter also
 carries the common tags `app` (`compliance-evidence-service`) and `squad`
 (`compliance`).
 
