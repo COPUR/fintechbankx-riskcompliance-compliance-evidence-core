@@ -37,7 +37,7 @@ jobs:
       - name: Lint and render chart
         run: |
           chart=deploy/helm/compliance-evidence-service
-          args="--set image.repository=ci/compliance-evidence-service --set image.tag=${{ github.sha }} --set externalSecret.remoteSecretName=ci/db-app"
+          args="--set image.repository=ci/compliance-evidence-service --set image.tag=${{ github.sha }} --set externalSecret.remoteSecretName=ci/compliance-evidence-service/db-app"
           args="$args --set config.DB_URL=jdbc:postgresql://ci:5432/db --set config.KAFKA_BOOTSTRAP_SERVERS=ci:9098"
           args="$args --set config.OIDC_ISSUER_URI=https://ci/realms/fintechbankx --set config.OIDC_JWK_SET_URI=https://ci/certs"
           # Empty required settings must fail the render, not produce pods that cannot start.
@@ -60,7 +60,7 @@ jobs:
           grep -q 'OUTBOX_RELAY_ENABLED: "false"' <<<"$rendered"
           helm template ci "$chart" $args --set-string config.OUTBOX_RELAY_ENABLED=true | grep -q 'OUTBOX_RELAY_ENABLED: "true"'
           # Migration owner credential: its own ExternalSecret and env vars when configured.
-          migration="$(helm template ci "$chart" $args --set externalSecret.migrationSecretName=ci/db-migration)"
+          migration="$(helm template ci "$chart" $args --set externalSecret.migrationSecretName=ci/compliance-evidence-service/db-migration)"
           grep -q "secretKey: DB_MIGRATION_USERNAME" <<<"$migration"
           grep -q "name: compliance-evidence-service-db-migration" <<<"$migration"
           if grep -q "DB_MIGRATION_USERNAME" <<<"$rendered"; then echo "migration secret rendered without migrationSecretName" >&2; exit 1; fi
