@@ -132,7 +132,14 @@ components:
     DPoP:
       name: DPoP
       in: header
-      required: true
+      required: false
+      description: >-
+        DPoP proof. Not required and not verified by this service: per the
+        platform contract addendum (2026-10-08) DPoP binding applies only to
+        open-finance TPP clients, and this API is called by internal services
+        (client-credentials Bearer tokens, bound by mesh mTLS) and compliance
+        staff (Bearer tokens). Tokens must carry aud svc-cmp-evidence; SERVICE
+        callers must also be on the azp allow-list.
       schema:
         type: string
     InteractionId:

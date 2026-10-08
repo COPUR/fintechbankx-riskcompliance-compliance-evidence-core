@@ -33,11 +33,18 @@ import java.util.Map;
  * another client is refused here. Realm roles become ROLE_* authorities for
  * the @PreAuthorize rules on ComplianceController.
  *
- * DPoP is not required for internal service-to-service and first-party
- * clients (platform contract addendum): calls inside the mesh are bound by the
- * mesh-wide STRICT mTLS and the compliance namespace's default-deny policy.
- * The SERVICE role alone is not enough: the calling client (azp) must also be
- * on SERVICE_CALLERS (see {@link ServiceCallerPolicy}).
+ * Enforced here: the token's issuer and signature, its audience (this
+ * service id, {@link #audienceValidator}) and, for the SERVICE role, the azp
+ * allow-list: the calling client must be on SERVICE_CALLERS (see
+ * {@link ServiceCallerPolicy}). Which workloads may reach the service at all
+ * is decided by the ALLOW rules in the service-mesh repository (namespace
+ * default-deny, mesh-wide STRICT mTLS); this chart ships no mesh policy.
+ *
+ * DPoP is not verified. Per the platform contract addendum (2026-10-08) DPoP
+ * binding applies only to open-finance TPP clients; this service's callers are
+ * internal services with client-credentials tokens (bound by mesh mTLS) and
+ * compliance staff, whose tokens are not DPoP-bound. The OpenAPI spec documents
+ * the DPoP header as optional accordingly.
  *
  * Actuator endpoints are served on the management port, which the chart's
  * NetworkPolicy opens to the observability namespace only.
