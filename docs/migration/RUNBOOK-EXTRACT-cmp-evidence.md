@@ -61,7 +61,7 @@ The backfill is independent of the other contexts' backfills and idempotent. `sc
 | 2 | Payments call `POST /api/v1/compliance/screen` with the payment id as `transactionId` and a client-credentials token (`SERVICE` role), behind a flag | payments squad, with the compliance squad | screening 5xx rate above 1 % over 5 min, p99 above 2 s, or any 400 caused by a missing field | flag off; payments keep their local checks  |
 | 3 | **Only when** report generation and the review/submission workflow run in `svc-cmp-evidence` (not yet built) **and** the report-file plan above is done: monolith stops writing `compliance_reports`; run the backfill a last time. Until then the monolith stays the writer and the backfill keeps re-running as a mirror | compliance squad, with the monolith owner | last backfill does not reconcile, or a report written in the monolith after the stop | monolith table is still intact  |
 | 4 | After the next regulatory reporting cycle: drop the monolith table | monolith owner, compliance squad sign-off | any open regulator query on the period, or a reconciliation gap found afterwards | restore from snapshot  |
-| 5 | Preconditions: the mesh contract lists `msk` for `compliance-evidence-service` (allow-egress-msk generated for namespace `compliance`); topic `evt.cmp.compliance.screened.v1` exists on MSK (no DLQ: this service consumes nothing); `msk_cluster_arn` is set. Then turn the relay on with `--set-string config.OUTBOX_RELAY_ENABLED=true` (or in the environment's values file); watch `outbox_pending_events` drain and `outbox_parked_events` stay 0; consumers subscribe to `evt.cmp.compliance.screened.v1` | compliance squad, platform (mesh, MSK) | `outbox_parked_events` > 0, or `outbox_oldest_pending_age_seconds` above the alert threshold (900 s for 5 min, see "Parked outbox events") | set it back to `"false"`; events stay in the outbox and are sent in order once it is back on  |
+| 5 | Preconditions: the mesh contract lists `msk` for `compliance-evidence-service` (allow-egress-msk generated for namespace `compliance`); topic `evt.cmp.compliance.screened.v1` exists on MSK (no DLQ: this service consumes nothing); `msk_cluster_arn` is set. Then turn the relay on with `--set-string config.OUTBOX_RELAY_ENABLED=true` (or in the environment's values file); watch `outbox_pending_events` drain and `outbox_parked_rows` stay 0; consumers subscribe to `evt.cmp.compliance.screened.v1` | compliance squad, platform (mesh, MSK) | `outbox_parked_events_total` increases (OutboxEventsParked), or `outbox_oldest_pending_age_seconds` above the alert threshold (900 s for 5 min, see "Parked outbox events") | set it back to `"false"`; events stay in the outbox and are sent in order once it is back on  |
 
 Owners and triggers are Proposed; the owning squads confirm them before step 1.
 
@@ -120,10 +120,11 @@ max(outbox_oldest_pending_age_seconds{service_id="svc-cmp-evidence"}) > 900
 # severity: warning, squad: compliance
 increase(outbox_send_failures_total{service_id="svc-cmp-evidence"}[10m]) > 0
 
-# Proposed rule: a row was parked in the last 10 minutes and needs a decision.
-# outbox_parked_events is a gauge, hence delta, not increase. Severity: none yet (pending platform).
-# squad: compliance
-delta(outbox_parked_events{service_id="svc-cmp-evidence"}[10m]) > 0
+# Parked rows: no rule in this service. Platform's alert OutboxEventsParked fires on
+# any increase of the counter over 15 minutes, no for clause, severity warning, routed
+# by squad with namespace fallback:
+#   increase(outbox_parked_events_total{service_id="svc-cmp-evidence"}[15m]) > 0
+# Current number of parked rows (dashboard): outbox_parked_rows{service_id="svc-cmp-evidence"}
 ```
 
 Dependency: PR #11's AMP remote-write keep regex `.*outbox_pending.*` drops
@@ -147,7 +148,7 @@ order by created_seq;
 
 -- un-park (one event, or drop the event_id condition for all of them)
 update sc_cmp_evidence.outbox_event
-set parked_at = null, first_failed_at = null, attempts = 0, last_error = null
+set parked_at = null, park_counted = false, first_failed_at = null, attempts = 0, last_error = null
 where parked_at is not null and published_at is null
   and event_id = '<event id>';
 ```
@@ -165,7 +166,7 @@ where published_at is null and parked_at is null
 order by created_seq
 limit 1;
 
--- park it by hand
+-- park it by hand (park_counted stays false: the relay counts it once as OperatorPark)
 update sc_cmp_evidence.outbox_event
 set parked_at = now(), last_error = 'manual: <reason>'
 where published_at is null and parked_at is null
@@ -191,7 +192,7 @@ parked and record the decision here.
 - [x] Ingress from payments, istio-ingress and observability is owned by the service-mesh repository (mesh #11, 128e19d, allow-ingress-from-payments in namespace `compliance`); the chart ships no NetworkPolicy and CI rejects one
 - [ ] Payment services call this API (follow-up in the payments repositories)
 - [x] Screening events written through a transactional outbox in the screening's transaction; one event per new screening, none on retries or when a concurrent duplicate loses (`ComplianceServiceIT`); screening inputs not published
-- [x] Outbox failures per ADR-021 decision 4: payload errors park the row (skipped, counted by `outbox_parked_events`, replayed by hand); any other failure stops the batch without marking the row, backs off and alerts on `outbox_oldest_pending_age_seconds`, never parks; one sender at a time (`OutboxRelayTest`, `ComplianceServiceIT`)
+- [x] Outbox failures per ADR-021 decision 4: payload errors park the row (skipped, counted once by `outbox_parked_events_total`, shown by `outbox_parked_rows`, replayed by hand); any other failure stops the batch without marking the row, backs off and alerts on `outbox_oldest_pending_age_seconds`, never parks; one sender at a time (`OutboxRelayTest`, `ComplianceServiceIT`)
 - [ ] AsyncAPI catalog entry (proposed in asyncapi-catalog PR #11, not merged) matches `api/asyncapi/svc-cmp-evidence.yaml` (provider copy changes `screeningId` from `format: uuid` to the `CMP-<uuid>` pattern)
 - [ ] Topic `evt.cmp.compliance.screened.v1` created on the platform cluster (producer only, so no DLQ); IRSA `msk_cluster_arn` set
 - [ ] Mesh contract lists `msk` for `compliance-evidence-service` (allow-egress-msk generated for namespace `compliance`); until then the chart keeps the relay off

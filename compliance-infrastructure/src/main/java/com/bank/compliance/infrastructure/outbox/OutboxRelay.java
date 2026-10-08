@@ -36,7 +36,8 @@ import java.util.concurrent.TimeoutException;
  * parked; the outbox.oldest.pending.age.seconds gauge (from created_at) is
  * the alert signal. From the maxAttempts-th consecutive stopped run on the
  * failure is logged at ERROR instead of WARN. Parked rows are skipped,
- * counted by the outbox.parked.events gauge and replayed by hand (runbook).
+ * counted once by the outbox.parked.events counter (an operator park as
+ * OperatorPark), shown by the outbox.parked.rows gauge and replayed by hand (runbook).
  * Each screening aggregate has one event, so skipping a parked row reorders
  * no aggregate's events.
  */
@@ -45,6 +46,9 @@ public class OutboxRelay {
     // Distinct from the other services' keys ("cus_out"...) in case a database is ever shared.
     static final long RELAY_LOCK_KEY = 0x636D705F6F7574L; // "cmp_out"
     static final String SEND_FAILURES = "outbox.send.failures";
+    /** Counted once per parked row (Prometheus outbox_parked_events_total); tag exception. */
+    static final String PARKED_EVENTS = "outbox.parked.events";
+    static final String OPERATOR_PARK = "OperatorPark";
     private static final Logger log = LoggerFactory.getLogger(OutboxRelay.class);
 
     private final SpringDataOutboxRepository outbox;
@@ -106,9 +110,14 @@ public class OutboxRelay {
             return 0;
         }
         boolean[] stopped = {false};
+        // Counted after commit, so a rolled-back run never counts a park.
+        List<String> parks = new java.util.ArrayList<>();
         Integer published = transactions.execute(status -> {
             if (!outbox.tryRelayLock(RELAY_LOCK_KEY)) {
                 return 0;
+            }
+            for (int i = outbox.markUncountedParksCounted(); i > 0; i--) {
+                parks.add(OPERATOR_PARK);
             }
             List<OutboxEventJpaEntity> batch = outbox.findUnpublishedBatch(batchSize);
             int sent = 0;
@@ -134,12 +143,16 @@ public class OutboxRelay {
                     }
                     row.markFailed(describe(cause));
                     row.markParked(clock.instant());
+                    parks.add(cause.getClass().getSimpleName());
                     log.error("Outbox relay parked event {} for {}: {}; replay it by hand (runbook)",
                         row.getEventId(), row.getTopic(), row.getLastError(), e);
                 }
             }
             return sent;
         });
+        for (String reason : parks) {
+            meters.counter(PARKED_EVENTS, "exception", reason).increment();
+        }
         if (stopped[0]) {
             consecutiveStops++;
             nextAttemptAt = clock.instant().plus(backoff(consecutiveStops));

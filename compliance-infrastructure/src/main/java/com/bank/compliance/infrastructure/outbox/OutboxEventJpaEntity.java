@@ -61,6 +61,10 @@ public class OutboxEventJpaEntity {
     @Column(name = "parked_at")
     private Instant parkedAt;
 
+    /** The parked-events counter has counted this park (V10). */
+    @Column(name = "park_counted", nullable = false)
+    private boolean parkCounted;
+
     @Column(name = "attempts", nullable = false)
     private int attempts;
 
@@ -99,6 +103,7 @@ public class OutboxEventJpaEntity {
     public Instant getParkedAt() { return parkedAt; }
     public Instant getFirstFailedAt() { return firstFailedAt; }
     public int getAttempts() { return attempts; }
+    public boolean isParkCounted() { return parkCounted; }
     public String getLastError() { return lastError; }
 
     void markPublished(Instant at) {
@@ -116,5 +121,6 @@ public class OutboxEventJpaEntity {
     /** The relay gave up on this row; it stays unpublished until it is un-parked by hand. */
     void markParked(Instant at) {
         this.parkedAt = at;
+        this.parkCounted = true;
     }
 }

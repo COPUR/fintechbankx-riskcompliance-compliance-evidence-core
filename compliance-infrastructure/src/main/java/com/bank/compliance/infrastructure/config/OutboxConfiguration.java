@@ -24,8 +24,8 @@ public class OutboxConfiguration {
 
     /** Platform-wide outbox backlog series (Prometheus: outbox_pending_events). */
     static final String PENDING_GAUGE = "outbox.pending.events";
-    /** Rows the relay parked (Prometheus: outbox_parked_events). */
-    static final String PARKED_GAUGE = "outbox.parked.events";
+    /** Rows parked now (Prometheus: outbox_parked_rows); the counter outbox.parked.events is the alert signal. */
+    static final String PARKED_GAUGE = "outbox.parked.rows";
     /** Age of the oldest event waiting to be relayed (Prometheus: outbox_oldest_pending_age_seconds). */
     static final String OLDEST_PENDING_AGE_GAUGE = "outbox.oldest.pending.age.seconds";
     static final String SERVICE_ID = "svc-cmp-evidence";
@@ -71,14 +71,14 @@ public class OutboxConfiguration {
 
     /**
      * Events the relay parked: payload errors only (ADR-021 decision 4), or
-     * a manual park by an operator (runbook).
-     * Alert when above zero: consumers miss these until they are replayed by
-     * hand (runbook, "Parked outbox events").
+     * a manual park by an operator (runbook). Consumers miss these until they
+     * are replayed by hand. Platform alerts on the counter
+     * outbox_parked_events_total (OutboxEventsParked), not on this gauge.
      */
     @Bean
-    Gauge outboxParkedEventsGauge(MeterRegistry registry, SpringDataOutboxRepository outbox) {
+    Gauge outboxParkedRowsGauge(MeterRegistry registry, SpringDataOutboxRepository outbox) {
         return Gauge.builder(PARKED_GAUGE, outbox, SpringDataOutboxRepository::countByPublishedAtIsNullAndParkedAtIsNotNull)
-            .description("Compliance events parked after a payload error or by an operator")
+            .description("Compliance outbox rows parked now (payload error or operator)")
             .tag("service", SERVICE_ID)
             .register(registry);
     }

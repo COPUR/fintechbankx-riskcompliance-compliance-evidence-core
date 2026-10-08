@@ -30,6 +30,17 @@ public interface SpringDataOutboxRepository extends JpaRepository<OutboxEventJpa
     @Query("delete from OutboxEventJpaEntity e where e.publishedAt < :before")
     int deletePublishedBefore(@Param("before") Instant before);
 
+    /**
+     * Marks rows an operator parked by hand (park_counted still false) as
+     * counted and returns how many; the relay counts them as OperatorPark.
+     */
+    @Modifying
+    @Query(value = """
+        update outbox_event set park_counted = true
+        where parked_at is not null and not park_counted
+        """, nativeQuery = true)
+    int markUncountedParksCounted();
+
     /** Events waiting to be relayed (parked rows are not waiting: the relay skips them). */
     long countByPublishedAtIsNullAndParkedAtIsNull();
 
