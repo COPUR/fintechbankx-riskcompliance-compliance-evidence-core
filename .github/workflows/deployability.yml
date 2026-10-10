@@ -149,6 +149,27 @@ jobs:
             reject_render "config.${key//\\/} must not be set: logging levels are fixed in application.yml" \
               --set "config.$key=TRACE"
           done
+          # DB_SSL_ROOT_CERT switches on the TLS startup assertions (DatabaseTlsGuard, KafkaTlsGuard); the chart
+          # sets it from the mounted bundle on every container, so a values key, empty or set, is refused.
+          for key in DB_SSL_ROOT_CERT 'db\.ssl\.root\.cert' db-ssl-root-cert DBSSLROOTCERT; do
+            reject_render "config.${key//\\/} must not be set: the chart sets DB_SSL_ROOT_CERT from the mounted RDS CA bundle" \
+              --set "config.$key="
+            reject_render "config.${key//\\/} must not be set: the chart sets DB_SSL_ROOT_CERT from the mounted RDS CA bundle" \
+              --set "config.$key=/tmp/decoy.pem"
+          done
+          # The local profile (a developer machine) must not be activated or included, in any case, spelling,
+          # index or position of the comma list.
+          local_profile="must not activate the local profile: it is for a developer machine, never for a cluster"
+          reject_render "config.SPRING_PROFILES_ACTIVE $local_profile" --set config.SPRING_PROFILES_ACTIVE=local
+          reject_render "config.SPRING_PROFILES_ACTIVE $local_profile" --set 'config.SPRING_PROFILES_ACTIVE=Kafka-Strimzi\,LOCAL'
+          reject_render "config.SPRING_PROFILES_ACTIVE $local_profile" --set 'config.SPRING_PROFILES_ACTIVE=x \, local'
+          reject_render "config.SPRING_PROFILES_INCLUDE $local_profile" --set 'config.SPRING_PROFILES_INCLUDE=x\, local'
+          reject_render "config.SPRING_PROFILES_ACTIVE_0 $local_profile" --set config.SPRING_PROFILES_ACTIVE_0=Local
+          reject_render "config.spring.profiles.active[1] $local_profile" --set 'config.spring\.profiles\.active\[1\]=local'
+          reject_render "config.spring.profiles.active $local_profile" --set 'config.spring\.profiles\.active=kafka-msk\,local'
+          reject_render "config.spring.profiles.include $local_profile" --set 'config.spring\.profiles\.include=LOCAL'
+          # ...but only the profile named local: a name that merely contains it still renders.
+          helm template ci "$chart" $args --set 'config.SPRING_PROFILES_ACTIVE=kafka-msk\,localstack' > /dev/null
           # The chart has no extraEnv / env list: config.* is the only route into the pods' environment, so the
           # refusal above covers every values key. Adding such a list must wire it through the same check.
           if grep -qE '^(extraEnv|extraEnvFrom|env|envFrom):' "$chart/values.yaml"; then
