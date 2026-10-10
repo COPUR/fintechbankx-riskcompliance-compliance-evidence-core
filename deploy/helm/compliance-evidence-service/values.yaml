@@ -43,12 +43,13 @@ podDisruptionBudget:
 # Non-secret runtime settings, rendered into a ConfigMap.
 config:
   # Terraform output jdbc_url, e.g. jdbc:postgresql://<aurora-writer-endpoint>:5432/db_cmp_evidence_<env>?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem
-  # Rendering fails unless sslmode=verify-full and that sslrootcert each appear exactly once and no
-  # sslfactory, sslhostnameverifier or sslpasswordcallback is set; no other config key may carry a
-  # database URL (SPRING_DATASOURCE_*URL, SPRING_FLYWAY_URL, SPRING_APPLICATION_JSON), none may set
-  # SPRING_CONFIG_IMPORT, SPRING_CONFIG_ADDITIONAL_LOCATION or SPRING_CONFIG_LOCATION, a JVM option
-  # variable (JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS, _JAVA_OPTIONS, JAVA_OPTS), a LOGGING_LEVEL_* key or
-  # DB_SSL_ROOT_CERT (the chart sets it), and no SPRING_PROFILES_ACTIVE/INCLUDE may name local,
+  # Rendering fails unless sslmode=verify-full and that sslrootcert each appear exactly once (lower-case
+  # names, as PgJDBC reads them; SSLMODE or SSLROOTCERT is refused) and no sslfactory, sslfactoryarg,
+  # sslhostnameverifier, sslpasswordcallback or service is set; no other config key may start with
+  # SPRING_DATASOURCE, SPRING_FLYWAY, SPRING_LIQUIBASE, SPRING_R2DBC, SPRING_APPLICATION_JSON or
+  # SPRING_CONFIG, none may be a JVM option variable (JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS, _JAVA_OPTIONS,
+  # JAVA_OPTS), a LOGGING_LEVEL_* key or DB_SSL_ROOT_CERT (the chart sets it), and no
+  # SPRING_PROFILES_ACTIVE/INCLUDE/DEFAULT or SPRING_PROFILES_GROUP_* may name local,
   # in any spelling (keys are matched upper-cased with every non-alphanumeric character dropped; see
   # _helpers.tpl compliance.refusedConfigKey and the runbook). The Flyway migration Job (schema owner)
   # gets this URL too.

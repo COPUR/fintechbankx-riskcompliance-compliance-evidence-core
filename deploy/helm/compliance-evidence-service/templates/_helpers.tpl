@@ -113,16 +113,22 @@ sslmode=require encrypts but trusts any certificate.
 
 The query after the first "?" is read the way PgJDBC reads it (split on "&",
 name before the first "="). PgJDBC lets the last of repeated parameters win,
-so sslmode and sslrootcert must each appear exactly once; a custom sslfactory,
-sslhostnameverifier or sslpasswordcallback would replace the verification.
-Values are compared undecoded (PgJDBC decodes values, not names), so an encoded
-value fails closed. The
-ConfigMap exports every config key, so a second URL there (SPRING_DATASOURCE_*URL,
-SPRING_FLYWAY_URL, SPRING_APPLICATION_JSON) would override DB_URL and is refused
-too, and so is a config location or import (SPRING_CONFIG_IMPORT,
-SPRING_CONFIG_ADDITIONAL_LOCATION, SPRING_CONFIG_LOCATION, also indexed), which
-loads a file or configtree that can set the URL; the only configtree this
-service may read is one the chart itself renders on the fixed mount
+so sslmode and sslrootcert must each appear exactly once; a custom sslfactory
+(and its sslfactoryarg), sslhostnameverifier or sslpasswordcallback would
+replace the verification, and service= would load host, port and TLS settings
+from a pg_service.conf entry the chart cannot see. PgJDBC reads parameter names
+case-sensitively (SSLMODE is not sslmode and is ignored by the driver), so the
+required sslmode and sslrootcert are matched exactly in lower case and a
+differently-cased spelling of any of these names is refused by name rather than
+ignored. Values are compared undecoded (PgJDBC decodes values, not names), so
+an encoded value fails closed. The ConfigMap exports every config key, so any
+SPRING_DATASOURCE_*, SPRING_FLYWAY_*, SPRING_LIQUIBASE_*, SPRING_R2DBC_* or
+SPRING_APPLICATION_JSON key (a second URL, a driver class, driver properties)
+would override DB_URL and is refused by prefix, and so is every SPRING_CONFIG_*
+key (SPRING_CONFIG_IMPORT, SPRING_CONFIG_ADDITIONAL_LOCATION,
+SPRING_CONFIG_LOCATION, SPRING_CONFIG_NAME, also indexed), which picks or loads
+a file or configtree that can set the URL; the only configtree this service may
+read is one the chart itself renders on the fixed mount
 optional:configtree:/etc/fintechbankx/config/ (none today), never one named by a
 values key. JVM option variables (JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS,
 _JAVA_OPTIONS, JAVA_OPTS) are refused because a system property outranks every
@@ -140,20 +146,22 @@ DB_SSL_ROOT_CERT is refused as a config key, empty or set, in any spelling
 (DBSSLROOTCERT): it is the switch of the TLS startup assertions
 (DatabaseTlsGuard, KafkaTlsGuard run whenever it is set), and the chart sets it
 from the mounted bundle on every container (compliance.databaseCaFile). The
-local profile (a developer machine) is refused in SPRING_PROFILES_ACTIVE and
-SPRING_PROFILES_INCLUDE, also indexed (spring.profiles.active[1],
-SPRING_PROFILES_ACTIVE_0): the value is split on "," and each name trimmed and
-lower-cased, so it is caught in any case and at any position of the list
-(Kafka-Strimzi,LOCAL; x , local). Only the name local itself is refused.
+local profile (a developer machine) is refused in SPRING_PROFILES_ACTIVE,
+SPRING_PROFILES_INCLUDE and SPRING_PROFILES_DEFAULT, also indexed
+(spring.profiles.active[1], SPRING_PROFILES_ACTIVE_0), and in every profile
+group (SPRING_PROFILES_GROUP_*, spring.profiles.group.<name>[0]): the value is
+split on "," and each name trimmed and lower-cased, so it is caught in any case
+and at any position of the list (Kafka-Strimzi,LOCAL; x , local). Only the
+name local itself is refused.
 
 Takes a dict: key (the config key) and value (its value).
 */}}
 {{- define "compliance.refusedConfigKey" -}}
 {{- $key := toString .key -}}
 {{- $name := regexReplaceAll "[^A-Z0-9]" (upper $key) "" -}}
-{{- if regexMatch "^SPRING(DATASOURCE.*URL|DATASOURCEHIKARIDATASOURCEPROPERTIES.*|FLYWAYURL|APPLICATIONJSON)$" $name -}}
-{{- printf "config.%s must not be set: config.DB_URL is the only database URL (sslmode=verify-full)" $key -}}
-{{- else if regexMatch "^SPRINGCONFIG(IMPORT|ADDITIONALLOCATION|LOCATION)[0-9]*$" $name -}}
+{{- if regexMatch "^SPRING(DATASOURCE|FLYWAY|LIQUIBASE|R2DBC|APPLICATIONJSON)" $name -}}
+{{- printf "config.%s must not be set: config.DB_URL is the only database URL (sslmode=verify-full) and the chart sets every other database setting" $key -}}
+{{- else if regexMatch "^SPRINGCONFIG" $name -}}
 {{- printf "config.%s must not be set: it loads configuration that can override config.DB_URL" $key -}}
 {{- else if regexMatch "^(JAVATOOLOPTIONS|JDKJAVAOPTIONS|JAVAOPTIONS|JAVAOPTS)$" $name -}}
 {{- printf "config.%s must not be set: JVM options can override config.DB_URL and the TLS settings" $key -}}
@@ -161,7 +169,7 @@ Takes a dict: key (the config key) and value (its value).
 {{- printf "config.%s must not be set: logging levels are fixed in application.yml" $key -}}
 {{- else if eq $name "DBSSLROOTCERT" -}}
 {{- printf "config.%s must not be set: the chart sets DB_SSL_ROOT_CERT from the mounted RDS CA bundle, and it switches on the TLS startup assertions (DatabaseTlsGuard, KafkaTlsGuard)" $key -}}
-{{- else if regexMatch "^SPRINGPROFILES(ACTIVE|INCLUDE)[0-9]*$" $name -}}
+{{- else if or (regexMatch "^SPRINGPROFILES(ACTIVE|INCLUDE|DEFAULT)[0-9]*$" $name) (hasPrefix "SPRINGPROFILESGROUP" $name) -}}
 {{- $local := false -}}
 {{- range $profile := splitList "," (toString .value) -}}
 {{- if eq (lower (trim $profile)) "local" -}}
@@ -192,16 +200,21 @@ Takes a dict: key (the config key) and value (its value).
 {{- end -}}
 {{- $sslmode := list -}}
 {{- $rootcert := list -}}
+{{- $tlsParameters := list "sslmode" "sslrootcert" "sslfactory" "sslfactoryarg" "sslhostnameverifier" "sslpasswordcallback" "service" -}}
 {{- range $param := splitList "&" $query -}}
 {{- $kv := splitn "=" 2 $param -}}
 {{- $k := $kv._0 -}}
 {{- $v := toString (default "" $kv._1) -}}
-{{- if eq $k "sslmode" -}}
+{{- if and (ne $k (lower $k)) (has (lower $k) $tlsParameters) -}}
+{{- fail (printf "config.DB_URL must not set %s: PgJDBC reads parameter names case-sensitively, so only the lower-case %s is the verified setting" $k (lower $k)) -}}
+{{- else if eq $k "sslmode" -}}
 {{- $sslmode = append $sslmode $v -}}
 {{- else if eq $k "sslrootcert" -}}
 {{- $rootcert = append $rootcert $v -}}
-{{- else if has $k (list "sslfactory" "sslhostnameverifier" "sslpasswordcallback") -}}
+{{- else if has $k (list "sslfactory" "sslfactoryarg" "sslhostnameverifier" "sslpasswordcallback") -}}
 {{- fail (printf "config.DB_URL must not set %s: it replaces certificate or host name verification" $k) -}}
+{{- else if eq $k "service" -}}
+{{- fail "config.DB_URL must not set service: a pg_service.conf entry would supply host, port and TLS settings the chart cannot check" -}}
 {{- end -}}
 {{- end -}}
 {{- if ne (toJson $sslmode) (toJson (list "verify-full")) -}}
