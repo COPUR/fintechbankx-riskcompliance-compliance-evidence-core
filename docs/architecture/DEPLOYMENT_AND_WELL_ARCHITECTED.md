@@ -21,7 +21,8 @@ payment services ─HTTP─▶ compliance-evidence-service pods (EKS namespace c
 | AWS | `deploy/terraform` (Aurora, KMS, Secrets Manager, IRSA incl. topic-scoped MSK IAM access, alarms; platform `microservice-base` module) |
 | Events | `api/asyncapi/svc-cmp-evidence.yaml` (Proposed) |
 | Runtime config | `compliance-bootstrap/src/main/resources/application.yml` (all environment values from env) |
-| CI proof | `.github/workflows/deployability.yml` |
+| CI proof | `.github/workflows/deployability.yml` (hand-rolled: build, render, validate; nothing deploys from here) |
+| Deploy pipeline | Not adopted yet: no workflow calls the cicd-templates `helm-deploy.yml`. When it does, pass `helm-timeout: 15m` (the migration hook Job has a 600 s deadline, Helm's default 5 min is too short) and set the calling job's `timeout-minutes` above that, 20 for example (runbook, "Database migrations (Flyway Job)") |
 
 ## Well-Architected pillars
 

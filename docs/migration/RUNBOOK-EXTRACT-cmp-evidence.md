@@ -51,6 +51,8 @@ Deploy order, on `helm install` and on every `helm upgrade`:
 
 Use `helm upgrade --install ... --timeout 15m`. Helm's default 5 min is shorter than the Job's 600 s deadline plus the rollout, so Helm would give up while the Job is still running.
 
+Deploy pipeline: this repository's CI is hand-rolled (`Deployability` renders and validates the chart; nothing deploys from here) and no workflow calls the cicd-templates `helm-deploy.yml` yet. When the service adopts it, the calling job passes `helm-timeout: 15m` to `helm-deploy.yml` (the same 15 min as above, so the hook Job's 600 s deadline fits) and sets its own `timeout-minutes` above that, 20 for example, so the GitHub job does not cancel Helm while the migration Job is still within its deadline.
+
 A failed Job blocks the rollout. Helm marks the install or upgrade failed and does not touch the Deployment. On an upgrade the old pods keep serving on the old schema; on a first install nothing is deployed. Flyway applies each migration in its own transaction, so a failed migration leaves the schema at the last applied version and marks nothing as applied. To diagnose:
 
 ```bash
