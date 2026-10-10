@@ -28,4 +28,7 @@ COPY --from=build /workspace/extracted/application/ ./
 USER 10001:10001
 EXPOSE 8080 8081
 ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError -Djava.security.egd=file:/dev/urandom"
+# The service only validates its schema (decision 0002). Run the same image once with the
+# argument "migrate" before the app in every environment without the Helm migration Job
+# (local, ephemeral, docker run): `docker run ... <image> migrate`, then `docker run ... <image>`.
 ENTRYPOINT ["java", "org.springframework.boot.loader.launch.JarLauncher"]

@@ -34,6 +34,21 @@ payment services ─HTTP─▶ compliance-evidence-service pods (EKS namespace c
 | Cost optimization | Serverless v2 floor of 0.5 ACU in dev; dev overrides (single Aurora instance, 2-4 pods); log retention 30 days outside prod; published outbox rows purged after 7 days | `environments/dev.tfvars.example`, `values-dev.yaml`, `OutboxRelay.purgePublished` |
 | Sustainability | Scale-down to the minimum footprint outside peak; layered image keeps rebuilds small | `hpa.yaml`, `Dockerfile` |
 
+## Running locally or in an ephemeral environment
+
+The service never migrates its own schema: it starts with `compliance.database.flyway=validate` and refuses to start on an empty or outdated database (`Schema sc_cmp_evidence doesn't exist yet`, or `FlywayValidateException` for a pending migration), by design ([decision 0002](decisions/0002-flyway-runs-in-a-migration-job.md)). In the cluster the Helm hook Job runs the migrate step. Everywhere else, local machine, review or test environment, a plain Docker run, the migrate step runs before the app, once per new migration, with the same image or build:
+
+```bash
+# Gradle
+SPRING_DATASOURCE_PASSWORD=... ./gradlew :compliance-bootstrap:bootRun --args=migrate
+SPRING_DATASOURCE_PASSWORD=... ./gradlew :compliance-bootstrap:bootRun
+# jar or image: the first argument "migrate" runs DatabaseMigration and exits 0 when every migration is applied
+java -jar compliance-evidence-service.jar migrate && java -jar compliance-evidence-service.jar
+docker run --rm -e DB_URL=... -e SPRING_DATASOURCE_PASSWORD=... compliance-evidence-service migrate
+```
+
+Without `DB_MIGRATION_USERNAME` / `DB_MIGRATION_PASSWORD` the migrate step uses the app credential (single-user local runs); V7 and V12 then grant nothing new. The integration tests keep migrating as the owner (`PostgresTestDatabase`), so `./gradlew check` needs no separate step.
+
 ## Turning on the outbox relay
 
 The chart ships `OUTBOX_RELAY_ENABLED: "false"`. Preconditions before turning it on:
