@@ -77,13 +77,18 @@ run Flyway as a Job: its pods carry `app.kubernetes.io/name=<service account>`
 - The Job's pods match the mesh's `allow-egress-aurora` and `allow-egress-msk`
   policies (both select `app.kubernetes.io/name`). They have no IAM role, so
   MSK refuses them.
+- The Job's pods carry `sidecar.istio.io/inject: "false"`, written after
+  `podLabels` so it overrides their `"true"`. Aurora egress is a Kubernetes
+  NetworkPolicy on the name label, so the Job needs no proxy; without native
+  sidecars an injected proxy keeps the pod running after Flyway exits and the
+  Job never completes. `check-migration-job.py` asserts the label. The Job's
+  connection to Aurora is TLS verified by the driver, not by the mesh.
 - A pending migration keeps new service pods from starting
   (`FlywayValidateException`). With `maxUnavailable: 0` the old pods keep
   serving, and the rollout stalls instead of serving on the wrong schema.
 - Not verified on a cluster: that ESO syncs the hook ExternalSecret before
-  the Job's pod gives up, that the native Istio sidecar lets the Job complete,
-  and the timings. The chart is checked only by rendering, kubeconform and
-  the mutation checks.
+  the Job's pod gives up, and the timings. The chart is checked only by
+  rendering, kubeconform and the mutation checks.
 
 ## Reversibility
 

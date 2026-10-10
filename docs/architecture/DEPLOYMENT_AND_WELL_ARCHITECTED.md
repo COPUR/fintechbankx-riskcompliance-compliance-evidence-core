@@ -50,6 +50,6 @@ Then deploy with `--set-string config.OUTBOX_RELAY_ENABLED=true` (or set it in t
 - The mesh contract gives namespace `compliance` no MSK egress yet, so the relay ships off (see above).
 - Screening evidence has no retention or archival job yet; regulatory retention periods still need to be set.
 - The DB roles (owner `compliance_evidence_owner`, runtime `compliance_evidence_app`) are created by a DBA bootstrap step, not by Terraform; Terraform creates their secrets (`db-migration`, `db-app`).
-- The migration Job is checked by rendering, kubeconform and CI mutation checks only; it has not run on a cluster yet (External Secrets sync timing, native Istio sidecar completion).
+- The migration Job is checked by rendering, kubeconform and CI mutation checks only; it has not run on a cluster yet (External Secrets sync timing). Its pods opt out of the Istio sidecar (`sidecar.istio.io/inject: "false"`, asserted by `check-migration-job.py`): Aurora egress is a NetworkPolicy on the name label, and an injected proxy would keep the Job from completing.
 - `microservice-base` is pinned to a commit; move to a tag once the modules repo publishes releases.
 - No load test yet; HPA targets are starting values.

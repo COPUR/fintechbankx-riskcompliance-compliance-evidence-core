@@ -39,7 +39,12 @@ spec:
     metadata:
       labels:
         {{- include "compliance.migrationSelectorLabels" . | nindent 8 }}
-        {{- toYaml .Values.podLabels | nindent 8 }}
+        {{- toYaml (omit .Values.podLabels "sidecar.istio.io/inject") | nindent 8 }}
+        # Written after podLabels so it overrides their value. No sidecar for the
+        # Job: Aurora egress is a Kubernetes NetworkPolicy on the name label above,
+        # so the Job needs no proxy, and without native sidecars an injected proxy
+        # keeps the pod running after Flyway exits, so the Job never completes.
+        sidecar.istio.io/inject: "false"
     spec:
       serviceAccountName: {{ include "compliance.migrationName" . }}
       restartPolicy: Never
