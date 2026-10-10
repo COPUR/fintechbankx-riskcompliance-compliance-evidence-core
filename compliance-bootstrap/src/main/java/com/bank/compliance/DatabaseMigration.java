@@ -22,8 +22,10 @@ import java.util.Arrays;
  * release starts.
  *
  * <p>The context holds only the datasource, Flyway and the DatabaseTlsGuard
- * ({@link DatabaseTlsConfiguration}, on whenever DB_SSL_ROOT_CERT is set): no
- * web server, JPA, Kafka, security or outbox relay. It reads the same
+ * ({@link DatabaseTlsConfiguration}, on by default: the Job sets
+ * DB_SSL_ROOT_CERT in the chart, and only the local profile or the test
+ * switch turn the guard off): no web server, JPA, Kafka, security or outbox
+ * relay. It reads the same
  * application.yml with the {@value #PROFILE} profile, which sets
  * compliance.database.flyway=migrate ({@link FlywayStartupConfiguration}).
  *

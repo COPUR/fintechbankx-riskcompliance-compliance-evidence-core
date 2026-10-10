@@ -30,5 +30,7 @@ EXPOSE 8080 8081
 ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError -Djava.security.egd=file:/dev/urandom"
 # The service only validates its schema (decision 0002). Run the same image once with the
 # argument "migrate" before the app in every environment without the Helm migration Job
-# (local, ephemeral, docker run): `docker run ... <image> migrate`, then `docker run ... <image>`.
+# (local, ephemeral, docker run). The TLS startup assertions are on by default and refuse a
+# run without the RDS CA bundle (DB_SSL_ROOT_CERT), so such runs set the local profile:
+# `docker run -e SPRING_PROFILES_ACTIVE=local ... <image> migrate`, then the same without `migrate`.
 ENTRYPOINT ["java", "org.springframework.boot.loader.launch.JarLauncher"]

@@ -10,6 +10,9 @@ spring:
   lifecycle:
     timeout-per-shutdown-phase: 25s
   datasource:
+    # The TLS startup assertions (DatabaseTlsGuard, KafkaTlsGuard) are on by default and
+    # refuse this local default: a run without the chart needs SPRING_PROFILES_ACTIVE=local
+    # (README, "Run locally"). Tests set fintechbankx.tls.enforce=false in test code only.
     url: ${DB_URL:jdbc:postgresql://localhost:5432/db_cmp_evidence_local}
     username: ${DB_USERNAME:compliance_evidence_app}
     # The credential is bound from SPRING_DATASOURCE_PASSWORD (Kubernetes Secret

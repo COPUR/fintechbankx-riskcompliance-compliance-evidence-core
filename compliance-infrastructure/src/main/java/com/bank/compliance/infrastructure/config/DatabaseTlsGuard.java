@@ -26,8 +26,10 @@ import org.springframework.core.env.Environment;
  * must also equal it: a verified URL to another database is still another
  * database.
  *
- * <p>Registered by {@link DatabaseTlsConfiguration} only when DB_SSL_ROOT_CERT is
- * set. Messages name the property, never the URL, which may carry a password.
+ * <p>Registered by {@link DatabaseTlsConfiguration} by default; only the local
+ * profile or the test switch ({@link StartupAssertions}) leave it out. While it
+ * is on, DB_SSL_ROOT_CERT is required: missing or blank fails the startup.
+ * Messages name the property, never the URL, which may carry a password.
  */
 public final class DatabaseTlsGuard implements BeanFactoryPostProcessor {
 
@@ -55,7 +57,10 @@ public final class DatabaseTlsGuard implements BeanFactoryPostProcessor {
     void verify() {
         String rootCert = environment.getProperty(ROOT_CERT_PROPERTY, "");
         if (rootCert.isBlank()) {
-            throw new IllegalStateException(ROOT_CERT_PROPERTY + " is set but empty: it must name the mounted RDS CA bundle");
+            throw new IllegalStateException(ROOT_CERT_PROPERTY + " must name the mounted RDS CA bundle (the chart sets it"
+                    + " on every container): the TLS startup assertions are on by default, and only the Spring profile "
+                    + StartupAssertions.LOCAL_PROFILE + " or " + StartupAssertions.ENFORCE_PROPERTY
+                    + "=false (tests) turn them off");
         }
         String datasourceUrl = environment.getProperty(DATASOURCE_URL);
         requireVerifiedTls(DATASOURCE_URL, datasourceUrl, rootCert);

@@ -6,8 +6,7 @@ import org.springframework.boot.ssl.SslBundles;
 import java.util.Set;
 
 /**
- * Kafka transport at startup, the sibling of {@link DatabaseTlsGuard}. Where
- * the RDS CA bundle is mounted (DB_SSL_ROOT_CERT, always in the chart) the
+ * Kafka transport at startup, the sibling of {@link DatabaseTlsGuard}. The
  * outbox relay publishes screening decisions over TLS: SASL_SSL to Amazon MSK
  * with IAM authentication (profile kafka-msk) or SSL with the Strimzi
  * KafkaUser client certificate (profile kafka-strimzi, mutual TLS). A values
@@ -18,11 +17,11 @@ import java.util.Set;
  * then the producer's own, then {@code spring.kafka.producer.properties}) and
  * refuses to start unless it is one of {@link #ACCEPTED_PROTOCOLS}.
  *
- * <p>Registered by {@link KafkaTlsConfiguration} whenever DB_SSL_ROOT_CERT is
- * set, relay on or off: the relay flag ({@code compliance.outbox.relay.enabled})
- * gates publishing only, so a misconfigured producer is caught before the flag
- * is turned on. Local runs and tests have no bundle, so the guard stays off
- * for them. Messages name the property and the value, never a broker address.
+ * <p>Registered by {@link KafkaTlsConfiguration} by default, relay on or off:
+ * the relay flag ({@code compliance.outbox.relay.enabled}) gates publishing
+ * only, so a misconfigured producer is caught before the flag is turned on.
+ * Only the local profile or the test switch ({@link StartupAssertions}) leave
+ * it out. Messages name the property and the value, never a broker address.
  */
 public final class KafkaTlsGuard {
 
@@ -41,9 +40,10 @@ public final class KafkaTlsGuard {
         Object protocol = kafka.buildProducerProperties(sslBundles).get(SECURITY_PROTOCOL);
         if (protocol == null || !ACCEPTED_PROTOCOLS.contains(protocol.toString())) {
             throw new IllegalStateException("spring.kafka producer " + SECURITY_PROTOCOL
-                    + " must be SASL_SSL or SSL while " + DatabaseTlsGuard.ROOT_CERT_PROPERTY
-                    + " is set, relay on or off (Amazon MSK with IAM authentication, profile"
-                    + " kafka-msk, or Strimzi mutual TLS, profile kafka-strimzi), got "
+                    + " must be SASL_SSL or SSL, relay on or off (Amazon MSK with IAM authentication, profile"
+                    + " kafka-msk, or Strimzi mutual TLS, profile kafka-strimzi); the TLS startup assertions are on"
+                    + " by default and only the Spring profile " + StartupAssertions.LOCAL_PROFILE + " or "
+                    + StartupAssertions.ENFORCE_PROPERTY + "=false (tests) turn them off; got "
                     + (protocol == null ? "none (Kafka defaults to PLAINTEXT)" : protocol));
         }
     }

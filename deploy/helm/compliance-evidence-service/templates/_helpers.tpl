@@ -188,9 +188,14 @@ the JVM option variables JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS, _JAVA_OPTIONS and
 JAVA_OPTS whatever their value (a system property outranks every environment
 variable; the guard only checks the value of the first three); LOGGING_LEVEL_*
 (an install-time level could turn on wire logging, which prints credentials
-and personal data); and DB_SSL_ROOT_CERT, empty or set (the switch of the TLS
-startup assertions DatabaseTlsGuard and KafkaTlsGuard; the chart sets it from
-the mounted bundle on every container). Every config value must be one string:
+and personal data); DB_SSL_ROOT_CERT, empty or set (the bundle the TLS
+startup assertions DatabaseTlsGuard and KafkaTlsGuard, on by default, verify
+against; the chart sets it from the mounted bundle on every container, and
+the service refuses to start without it); and FINTECHBANKXTLS* (the guard
+refuses fintechbankx.tls.* in every spelling it canonicalises; this rule the
+one it keeps apart: fintechbankx.tls.enforce=false is the test switch of the
+assertions, with the local profile the only way off, neither for a cluster).
+Every config value must be one string:
 a list or map would render as its Go form. config.DB_URL must start with
 jdbc:postgresql: exactly (the guard also lets a wrapper driver through). The
 application's DatabaseTlsGuard repeats the URL checks at startup, in the
@@ -214,7 +219,9 @@ Takes a dict: key (the config key) and value (its value).
 {{- else if regexMatch "^LOGGINGLEVEL" $name -}}
 {{- printf "config.%s must not be set: logging levels are fixed in application.yml" $key -}}
 {{- else if eq $name "DBSSLROOTCERT" -}}
-{{- printf "config.%s must not be set: the chart sets DB_SSL_ROOT_CERT from the mounted RDS CA bundle, and it switches on the TLS startup assertions (DatabaseTlsGuard, KafkaTlsGuard)" $key -}}
+{{- printf "config.%s must not be set: the chart sets DB_SSL_ROOT_CERT from the mounted RDS CA bundle, which the TLS startup assertions (DatabaseTlsGuard, KafkaTlsGuard; on by default) verify against" $key -}}
+{{- else if regexMatch "^FINTECHBANKXTLS" $name -}}
+{{- printf "config.%s must not be set: fintechbankx.tls.enforce is the test switch of the TLS startup assertions, which are on by default; only the local profile and tests turn them off, never a cluster" $key -}}
 {{- end -}}
 {{- end -}}
 

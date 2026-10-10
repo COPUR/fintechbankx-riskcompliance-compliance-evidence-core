@@ -69,7 +69,7 @@ spec:
             # The runtime role V7 and V12 grant (Flyway placeholder runtime_role).
             - name: DB_USERNAME
               value: {{ .Values.config.DB_USERNAME | quote }}
-            # Aurora CA bundle; also turns on DatabaseTlsGuard.
+            # Aurora CA bundle; DatabaseTlsGuard (on by default) requires it and checks DB_URL against it.
             - name: DB_SSL_ROOT_CERT
               value: {{ include "compliance.databaseCaFile" . | quote }}
           resources:

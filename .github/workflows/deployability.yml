@@ -192,8 +192,9 @@ jobs:
             reject_render "config.${key//\\/} must not be set: logging levels are fixed in application.yml" \
               --set "config.$key=TRACE"
           done
-          # DB_SSL_ROOT_CERT switches on the TLS startup assertions (DatabaseTlsGuard, KafkaTlsGuard); the chart
-          # sets it from the mounted bundle on every container, so a values key, empty or set, is refused.
+          # DB_SSL_ROOT_CERT is the bundle the TLS startup assertions (DatabaseTlsGuard, KafkaTlsGuard; on by default)
+          # verify against; the chart sets it from the mounted bundle on every container, so a values key, empty or
+          # set, is refused.
           for key in DB_SSL_ROOT_CERT 'db\.ssl\.root\.cert' db-ssl-root-cert DBSSLROOTCERT; do
             reject_render "config.${key//\\/} is not allowed: a TLS parameter name can replace the mounted CA" --set "config.$key="
             reject_render "config.${key//\\/} is not allowed: a TLS parameter name can replace the mounted CA" --set "config.$key=/tmp/decoy.pem"
@@ -327,8 +328,8 @@ jobs:
           # The relay stays off until the mesh contract gives this namespace MSK egress (runbook step 1).
           grep -q '"OUTBOX_RELAY_ENABLED": "false"' <<<"$rendered"
           helm template ci "$chart" $args --set-string config.OUTBOX_RELAY_ENABLED=true | grep -q '"OUTBOX_RELAY_ENABLED": "true"'
-          # KafkaTlsGuard runs whenever DB_SSL_ROOT_CERT is set (always, in the chart), relay on or off, so the
-          # default env must already give the producer a TLS protocol or no default-cluster pod would start.
+          # KafkaTlsGuard is on by default, relay on or off, so the default env must already give the producer a
+          # TLS protocol or no default-cluster pod would start.
           grep -q '"KAFKA_SECURITY_PROTOCOL": "SASL_SSL"' <<<"$rendered"
           grep -q 'SPRING_PROFILES_ACTIVE: "kafka-msk"' <<<"$rendered"
           # Migration owner credential: its own ExternalSecret, and the Job cannot run without it.

@@ -84,10 +84,12 @@ kafka:
 # Amazon RDS CA bundle for Aurora TLS with certificate and host-name verification
 # (cicd-templates 4f0f266). ConfigMap rds-ca-bundle (key global-bundle.pem) is
 # published in each service namespace by the mesh platform repo's trust-manager
-# Bundle. Mounted read-only at mountPath and exported as DB_SSL_ROOT_CERT; the
-# volume is not optional, so a missing bundle keeps the pod from starting
-# instead of connecting unverified. There is no switch to turn it off: this
-# service always has a PostgreSQL database.
+# Bundle. Mounted read-only at mountPath and exported as DB_SSL_ROOT_CERT, which
+# the service's TLS startup assertions (on by default) require; the volume is not
+# optional, so a missing bundle keeps the pod from starting instead of connecting
+# unverified. There is no switch to turn it off: this service always has a
+# PostgreSQL database, and the assertions' only switches (the local profile, the
+# test property fintechbankx.tls.enforce) are refused as config keys.
 databaseCa:
   configMapName: rds-ca-bundle
   key: global-bundle.pem
