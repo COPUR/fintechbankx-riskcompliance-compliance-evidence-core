@@ -45,7 +45,8 @@ config:
   # Terraform output jdbc_url, e.g. jdbc:postgresql://<aurora-writer-endpoint>:5432/db_cmp_evidence_<env>?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem
   # Rendering fails unless sslmode=verify-full and that sslrootcert each appear exactly once and no
   # sslfactory, sslhostnameverifier or sslpasswordcallback is set; no other config key may carry a
-  # database URL (SPRING_DATASOURCE_*URL, SPRING_FLYWAY_URL, SPRING_APPLICATION_JSON). The Flyway
+  # database URL (SPRING_DATASOURCE_*URL, SPRING_FLYWAY_URL, SPRING_APPLICATION_JSON), and none may set
+  # SPRING_CONFIG_IMPORT, SPRING_CONFIG_ADDITIONAL_LOCATION or SPRING_CONFIG_LOCATION. The Flyway
   # migration Job (schema owner) gets this URL too.
   DB_URL: ""
   # Runtime role: the service connects as it; the migration Job grants it (V7, V12).
