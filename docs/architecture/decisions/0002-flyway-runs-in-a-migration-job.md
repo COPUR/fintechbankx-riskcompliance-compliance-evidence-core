@@ -69,7 +69,19 @@ run Flyway as a Job: its pods carry `app.kubernetes.io/name=<service account>`
    role, case-insensitively, so a `db-migration` secret that holds the runtime
    credential exits the Job with 1 (`DatabaseMigrationIT`,
    `MigrationRoleGuardTest`).
-6. CI (`deploy/helm`, `scripts/ci/check-migration-job.py`) asserts the split.
+6. **The roles come from `db/bootstrap/roles.sql`.** The DBA runs it once per
+   environment as the Aurora master user. It is idempotent and creates two
+   distinct `LOGIN` roles, `compliance_evidence_owner` (owns `sc_cmp_evidence`)
+   and `compliance_evidence_app` (runtime, no member of the owner, nothing
+   granted beyond `CONNECT`: V7 and V12 grant it the rest, insert-only on
+   `compliance_screening`). It holds no password; both are set out of band
+   (psql `\password`). `RoleBootstrapIT` runs it twice on a scratch database,
+   then every migration as the owner, and checks that the runtime role is
+   refused `UPDATE`, `DELETE` and `TRUNCATE` on the evidence by privilege.
+   This closes the security review's insert-only condition 1 in this
+   repository; the platform's terraform-modules ships only a generic
+   `role_bootstrap_sql` (unverified here: not in the local clone).
+7. CI (`deploy/helm`, `scripts/ci/check-migration-job.py`) asserts the split.
    The app pods never reference the `db-migration` secret. The Job exists with
    the hooks, limits and labels above. No Service, PDB, NetworkPolicy,
    Deployment or topology-spread selector matches its pods. kubeconform
@@ -88,9 +100,11 @@ run Flyway as a Job: its pods carry `app.kubernetes.io/name=<service account>`
   MSK refuses them.
 - The Job's pods carry `sidecar.istio.io/inject: "false"`, written after
   `podLabels` so it overrides their `"true"`. Aurora egress is a Kubernetes
-  NetworkPolicy on the name label, so the Job needs no proxy; without native
-  sidecars an injected proxy keeps the pod running after Flyway exits and the
-  Job never completes. `check-migration-job.py` asserts the label. The Job's
+  NetworkPolicy keyed on the pods' labels, so the Job needs no proxy. The mesh
+  runs native sidecars (service-mesh 931b6bc), with which a Job completes even
+  with an injected proxy, so the opt-out is optional; it is kept because it
+  costs nothing and a cluster without native sidecars would keep the pod
+  running after Flyway exits. `check-migration-job.py` asserts the label. The Job's
   connection to Aurora is TLS verified by the driver, not by the mesh.
 - A pending migration keeps new service pods from starting
   (`FlywayValidateException`). With `maxUnavailable: 0` the old pods keep
@@ -99,7 +113,16 @@ run Flyway as a Job: its pods carry `app.kubernetes.io/name=<service account>`
   the Job's pod gives up, and the timings. The chart is checked only by
   rendering, kubeconform and the mutation checks.
 
-## Mesh contract: pending
+## Mesh contract
+
+Update 2026-10-10 (platform, through the coordinator): mesh d2ccacc selects
+Aurora egress for the migration Job on both `app.kubernetes.io/name` and
+`app.kubernetes.io/component=db-migration`; the chart keeps both labels on the
+Job's pods and `check-migration-job.py` asserts them. The mesh contract uses
+native sidecars, so the sidecar opt-out is optional and kept. Not verified
+here: d2ccacc is not in the local clone of the mesh repository.
+
+### History: pending (before the update above)
 
 The db-migration Job is not yet in the mesh contract
 (`fintechbankx-platform-mesh-security-service-mesh`, `contracts/mesh-contract.yaml`).
