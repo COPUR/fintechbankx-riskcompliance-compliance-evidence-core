@@ -67,6 +67,13 @@ helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
 {{- fail "externalSecret.enabled must be true: the migration Job reads the schema owner's credential (externalSecret.migrationSecretName)" -}}
 {{- end -}}
 {{- $_ := required "externalSecret.migrationSecretName is required: the migration Job runs Flyway as the schema owner (Secrets Manager <env>/<service account>/db-migration)" .Values.externalSecret.migrationSecretName -}}
+{{- /* The single-user fallback: one credential for the Job and the service would run Flyway and the
+       service as the same role (decision 0002). Names are compared trimmed and without a trailing "/". */ -}}
+{{- $migration := trimSuffix "/" (trim (toString .Values.externalSecret.migrationSecretName)) -}}
+{{- $runtime := trimSuffix "/" (trim (toString (default "" .Values.externalSecret.remoteSecretName))) -}}
+{{- if eq $migration $runtime -}}
+{{- fail "externalSecret.migrationSecretName must not be the runtime secret (externalSecret.remoteSecretName): the migration Job runs Flyway as the schema owner and the service as the runtime role, never one credential for both" -}}
+{{- end -}}
 {{- end -}}
 
 {{/* Shared by the app pods and the migration Job pods. */}}
@@ -152,14 +159,18 @@ SPRING_PROFILES_INCLUDE and SPRING_PROFILES_DEFAULT, also indexed
 group (SPRING_PROFILES_GROUP_*, spring.profiles.group.<name>[0]): the value is
 split on "," and each name trimmed and lower-cased, so it is caught in any case
 and at any position of the list (Kafka-Strimzi,LOCAL; x , local). Only the
-name local itself is refused.
+name local itself is refused. Every config value must be one string: a list or
+map ({local}, [local]) would render as its Go form and carry a refused name
+past the value check.
 
 Takes a dict: key (the config key) and value (its value).
 */}}
 {{- define "compliance.refusedConfigKey" -}}
 {{- $key := toString .key -}}
 {{- $name := regexReplaceAll "[^A-Z0-9]" (upper $key) "" -}}
-{{- if regexMatch "^SPRING(DATASOURCE|FLYWAY|LIQUIBASE|R2DBC|APPLICATIONJSON)" $name -}}
+{{- if or (kindIs "slice" .value) (kindIs "map" .value) -}}
+{{- printf "config.%s must be a single string: a list or map would render as its Go form and bypass the value checks" $key -}}
+{{- else if regexMatch "^SPRING(DATASOURCE|FLYWAY|LIQUIBASE|R2DBC|APPLICATIONJSON)" $name -}}
 {{- printf "config.%s must not be set: config.DB_URL is the only database URL (sslmode=verify-full) and the chart sets every other database setting" $key -}}
 {{- else if regexMatch "^SPRINGCONFIG" $name -}}
 {{- printf "config.%s must not be set: it loads configuration that can override config.DB_URL" $key -}}
