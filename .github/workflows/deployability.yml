@@ -48,6 +48,26 @@ jobs:
           tar -xzf "$tmpdir/kubeconform.tar.gz" -C "$tmpdir" kubeconform
           sudo install "$tmpdir/kubeconform" /usr/local/bin/kubeconform
           rm -rf "$tmpdir"
+      - name: Vendored datasource/TLS guard (cicd-templates a4f0072)
+        shell: bash
+        run: |
+          set -euo pipefail
+          chart=deploy/helm/compliance-evidence-service
+          file="$chart/templates/_fbx_helpers.tpl"
+          # fintechbankx-platform-delivery-iac-cicd-templates charts/fintechbankx-service/templates/_helpers.tpl at
+          # a4f0072, copied unchanged under a header (the first Go-template comment, up to its first "*/}}" line).
+          want=1fd684735383301baf3052c5d8978dd86edee1ac1c66ebfb944a8a6a166f4c92
+          head -1 "$file" | grep -qxF '{{/*'
+          sed -n '1,/^\*\/}}$/p' "$file" | grep -q 'commit a4f0072'
+          got="$(sed '1,/^\*\/}}$/d' "$file" | sha256sum | cut -d' ' -f1)"
+          if [ "$got" != "$want" ]; then
+            echo "$file is not cicd-templates a4f0072 unchanged (sha256 $got, want $want); re-copy it" >&2; exit 1
+          fi
+          # Both workloads call the guard, through the chart's adapter, before they render anything.
+          for t in deployment.yaml migration-job.yaml; do
+            head -1 "$chart/templates/$t" | grep -qxF '{{- include "compliance.guard" . -}}'
+          done
+          grep -qF 'include "fbx.guard" (dict "Values"' "$chart/templates/_helpers.tpl"
       - name: Lint and render chart
         run: |
           chart=deploy/helm/compliance-evidence-service
@@ -205,6 +225,82 @@ jobs:
             echo "values.yaml gained an env list; route it through compliance.validateDatabaseTls first" >&2; exit 1
           fi
           reject_render "config.DB_URL must use sslmode=verify-full, exactly once" --set "config.DB_URL=$base?sslmode=require&applicationName=sslmode=verify-full"
+          # Vendored guard (cicd-templates a4f0072; fbx.guard through compliance.guard). The chart renders the only
+          # Spring profile from kafka.runtime (msk -> kafka-msk, strimzi -> kafka-strimzi); no config key sets one.
+          helm template ci "$chart" $args --set kafka.runtime=strimzi --set kafkaClientTls.enabled=true \
+            --set config.KAFKA_SECURITY_PROTOCOL=SSL | grep -q 'SPRING_PROFILES_ACTIVE: "kafka-strimzi"'
+          profile_key="is not allowed: a profile can activate an application-<profile> config in the image"
+          reject_render "config.SPRING_PROFILES_ACTIVE $profile_key" --set config.SPRING_PROFILES_ACTIVE=kafka-msk
+          reject_render "config.SPRING_PROFILES_ACTIVE $profile_key" --set 'config.SPRING_PROFILES_ACTIVE=kafka-msk\,localstack'
+          reject_render 'kafka.runtime must be "", msk or strimzi (got "bogus")' --set kafka.runtime=bogus
+          # Strimzi mutual TLS needs the client certificate Secret (kafkaClientTls).
+          reject_render "kafka.runtime strimzi needs kafkaClientTls.enabled" \
+            --set kafka.runtime=strimzi --set config.KAFKA_SECURITY_PROTOCOL=SSL
+          reject_render "kafka.runtime strimzi needs kafkaClientTls.enabled" \
+            --set kafka.runtime=strimzi --set config.KAFKA_SECURITY_PROTOCOL=SSL --set kafkaClientTls.enabled=true --set kafkaClientTls.secretName=
+          # Kafka TLS on the chart's routes: SASL_SSL with msk, SSL with strimzi, never PLAINTEXT; broker host names verified.
+          reject_render "config.KAFKA_SECURITY_PROTOCOL must be SASL_SSL or SSL" --set config.KAFKA_SECURITY_PROTOCOL=PLAINTEXT
+          reject_render "config.KAFKA_SECURITY_PROTOCOL must be SASL_SSL with kafka.runtime msk" --set config.KAFKA_SECURITY_PROTOCOL=SSL
+          reject_render "config.KAFKA_SECURITY_PROTOCOL must be SSL with kafka.runtime strimzi" \
+            --set kafka.runtime=strimzi --set kafkaClientTls.enabled=true
+          reject_render "config.SPRING_KAFKA_PROPERTIES_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM must be https" \
+            --set config.SPRING_KAFKA_PROPERTIES_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM=
+          # A Spring placeholder or Kubernetes variable in DB_URL is resolved after the check and could add sslmode=disable.
+          reject_render "config.DB_URL must not contain '\${' or '\$('" \
+            --set "config.DB_URL=$base?sslmode=verify-full&sslrootcert=$bundle&options=\${DB_OPTIONS}"
+          # The chart's own rules stay where the guard is narrower: JVM option keys are refused whatever their value,
+          # a wrapper driver is not a jdbc:postgresql URL, and keys are matched upper-cased with every non-alphanumeric
+          # character dropped (the guard's canonical form keeps a dot inside a word).
+          reject_render "config.JAVA_TOOL_OPTIONS must not be set: JVM options" --set config.JAVA_TOOL_OPTIONS=-Xmx512m
+          reject_render "config.DB_URL must be a jdbc:postgresql URL" \
+            --set "config.DB_URL=jdbc:p6spy:postgresql://ci:5432/db?sslmode=verify-full&sslrootcert=$bundle"
+          reject_render "config.SPRING.PRO.FILES.ACTIVE must not be set: the chart renders the only profile" \
+            --set 'config.SPRING\.PRO\.FILES\.ACTIVE=kafka-msk'
+          reject_render "config.SPRING_DATA.SOURCE_URL must not be set: config.DB_URL is the only database URL" \
+            --set "config.SPRING_DATA\.SOURCE_URL=$base?sslmode=disable"
+          # Kubernetes expands $(VAR) in a container env value from earlier entries and the envFrom Secret: the
+          # migration Job's DB_USERNAME=$(DB_MIGRATION_USERNAME) would make the runtime role the schema owner.
+          reject_render "config.DB_USERNAME must not contain '\$('" --set 'config.DB_USERNAME=$(DB_MIGRATION_USERNAME)'
+          reject_render "config.OIDC_AUDIENCE must not contain '\$('" --set 'config.OIDC_AUDIENCE=$(HOSTNAME)'
+          # Template interpolation: a newline in a key or a secret name the templates write must not add keys.
+          injection="$(mktemp)"
+          printf 'config:\n  "OIDC_AUDIENCE\\nSPRING_CONFIG_IMPORT": optional:file:/tmp/override.yml\n' > "$injection"
+          reject_render "is not a ConfigMap key ([-._a-zA-Z0-9]+)" -f "$injection"
+          reject_render "must not contain a control character" \
+            --set "externalSecret.remoteSecretName=ci/compliance-evidence-service/db-app"$'\n'"        property: username"
+          reject_render "must not contain a control character" \
+            --set "externalSecret.migrationSecretName=ci/compliance-evidence-service/db-migration"$'\n'"        version: x"
+          # Every other value a template interpolates is quoted (strings) or rendered with int (numbers), so a newline
+          # cannot close its line: each value below renders, and no rendered document carries the key "injected".
+          no_injection() {
+            python3 -c '
+          import sys, yaml
+          def walk(node):
+              if isinstance(node, dict):
+                  if "injected" in node:
+                      sys.exit("a newline in " + sys.argv[1] + " added the key injected")
+                  for value in node.values():
+                      walk(value)
+              elif isinstance(node, list):
+                  for value in node:
+                      walk(value)
+          for doc in yaml.safe_load_all(sys.stdin):
+              walk(doc)
+          ' "$1"
+          }
+          for spec in image.pullPolicy:10 image.tag:4 serviceAccount.name:6 serviceAccount.roleArn:4 \
+              externalSecret.secretStoreRef.name:4 externalSecret.secretStoreRef.kind:4 externalSecret.refreshInterval:2 \
+              databaseCa.configMapName:12 kafkaClientTls.secretName:18 config.OIDC_AUDIENCE:2 podLabels.team:8 \
+              replicaCount:2 service.port:14 service.managementPort:14 migrationJob.backoffLimit:2 \
+              migrationJob.activeDeadlineSeconds:2 topologySpread.maxSkew:10 podDisruptionBudget.minAvailable:2 \
+              autoscaling.minReplicas:2 autoscaling.maxReplicas:2 \
+              autoscaling.targetCPUUtilizationPercentage:10; do
+            path="${spec%%:*}"; indent="$(printf '%*s' "${spec##*:}" '')"
+            extra=""; [ "$path" = replicaCount ] && extra="--set autoscaling.enabled=false"
+            out="$(helm template ci "$chart" $args $extra --set kafkaClientTls.enabled=true \
+              --set-string "$path=x"$'\n'"${indent}injected: true" 2>&1)" || { echo "render with a newline in $path failed: $out" >&2; exit 1; }
+            no_injection "$path" <<<"$out"
+          done
           # Platform scrapes the management port through these pod annotations; the outbox alerts depend on them.
           python3 scripts/ci/check-scrape-annotations.py <<<"$rendered"
           if helm template ci "$chart" $args | sed '/prometheus.io\/path:/d' \
