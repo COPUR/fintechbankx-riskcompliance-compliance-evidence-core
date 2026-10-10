@@ -28,8 +28,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * reads the producer's effective security.protocol the way Spring Boot builds
  * it, so a producer-level override cannot hide a downgrade.
  *
- * <p>The guard is off when the relay is off (nothing publishes) and off
- * without DB_SSL_ROOT_CERT (local runs and tests).
+ * <p>The guard runs whenever DB_SSL_ROOT_CERT is set, like DatabaseTlsGuard,
+ * relay on or off: the relay flag decides only whether anything publishes, so
+ * a cluster pod with a plaintext producer is refused before the flag is ever
+ * turned on, not on the day it is. Without DB_SSL_ROOT_CERT (local runs and
+ * tests) the guard stays off.
  */
 class KafkaTlsGuardTest {
 
@@ -116,20 +119,49 @@ class KafkaTlsGuardTest {
                 .run(context -> assertThat(context).hasNotFailed().hasSingleBean(KafkaTlsGuard.class));
     }
 
-    @Test
-    void staysInactiveWhileTheRelayIsOffEvenWithTheBundle() {
+    /** The relay flag gates publishing only: with the bundle set, a plaintext producer is refused relay off too. */
+    @ParameterizedTest
+    @ValueSource(strings = {"PLAINTEXT", "SASL_PLAINTEXT"})
+    void refusesToStartTheContextWithTheRelayOffWhenTheProducerWouldNotUseTls(String protocol) {
         contextRunner
-                .withPropertyValues("DB_SSL_ROOT_CERT=" + BUNDLE, "compliance.outbox.relay.enabled=false")
-                .run(context -> assertThat(context).hasNotFailed().doesNotHaveBean(KafkaTlsGuard.class));
+                .withPropertyValues("DB_SSL_ROOT_CERT=" + BUNDLE, "compliance.outbox.relay.enabled=false",
+                        PROTOCOL + "=" + protocol)
+                .run(context -> assertThat(context).hasFailed()
+                        .getFailure().hasMessageContaining(REFUSED).hasMessageContaining(protocol));
     }
 
+    /** The chart's default: bundle mounted, relay off, no protocol set means Kafka's PLAINTEXT default. */
     @Test
-    void staysInactiveWithoutTheBundleSoLocalRunsStillStart() {
+    void refusesToStartTheContextWithTheRelayOffOrUnsetWhenNoProtocolIsSet() {
         contextRunner
-                .withPropertyValues("compliance.outbox.relay.enabled=true", PROTOCOL + "=PLAINTEXT")
+                .withPropertyValues("DB_SSL_ROOT_CERT=" + BUNDLE, "compliance.outbox.relay.enabled=false")
+                .run(context -> assertThat(context).hasFailed()
+                        .getFailure().hasMessageContaining(REFUSED).hasMessageContaining("none"));
+        contextRunner
+                .withPropertyValues("DB_SSL_ROOT_CERT=" + BUNDLE)
+                .run(context -> assertThat(context).hasFailed()
+                        .getFailure().hasMessageContaining(REFUSED).hasMessageContaining("none"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"SASL_SSL", "SSL"})
+    void startsTheContextWithTheRelayOffWhenTheProducerIsOverTls(String protocol) {
+        contextRunner
+                .withPropertyValues("DB_SSL_ROOT_CERT=" + BUNDLE, "compliance.outbox.relay.enabled=false",
+                        PROTOCOL + "=" + protocol)
+                .run(context -> assertThat(context).hasNotFailed().hasSingleBean(KafkaTlsGuard.class));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"true", "false"})
+    void staysInactiveWithoutTheBundleSoLocalRunsStillStart(String relayEnabled) {
+        contextRunner
+                .withPropertyValues("compliance.outbox.relay.enabled=" + relayEnabled, PROTOCOL + "=PLAINTEXT")
                 .run(context -> assertThat(context).hasNotFailed().doesNotHaveBean(KafkaTlsGuard.class));
         contextRunner
-                .withPropertyValues("compliance.outbox.relay.enabled=true")
+                .withPropertyValues("compliance.outbox.relay.enabled=" + relayEnabled)
+                .run(context -> assertThat(context).hasNotFailed().doesNotHaveBean(KafkaTlsGuard.class));
+        contextRunner
                 .run(context -> assertThat(context).hasNotFailed().doesNotHaveBean(KafkaTlsGuard.class));
     }
 
