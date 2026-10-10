@@ -139,13 +139,13 @@ jobs:
             --set 'config.spring\.config\.import\[1\]=optional:configtree:/tmp/override/'
           # JVM option variables add system properties (-Dspring.datasource.url=..., -Dspring.config.import=...)
           # that outrank every environment variable, so none may come from install-time values.
-          for key in JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS JAVA_OPTS JAVA_TOOL-OPTIONS 'java.tool.options'; do
+          for key in JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS JAVA_OPTS JAVA_TOOL-OPTIONS 'java\.tool\.options'; do
             reject_render "config.${key//\\/} must not be set: JVM options can override config.DB_URL and the TLS settings" \
               --set "config.$key=-Dspring.datasource.url=$base?sslmode=disable"
           done
           # Logging levels are fixed in application.yml: an install-time level could turn on wire logging
           # (org.postgresql, org.apache.kafka), which prints credentials and personal data.
-          for key in LOGGING_LEVEL_ORG_POSTGRESQL LOGGING_LEVEL_ROOT 'logging.level.org.apache.kafka' LOGGING-LEVEL-ORG-POSTGRESQL; do
+          for key in LOGGING_LEVEL_ORG_POSTGRESQL LOGGING_LEVEL_ROOT 'logging\.level\.org\.apache\.kafka' LOGGING-LEVEL-ORG-POSTGRESQL; do
             reject_render "config.${key//\\/} must not be set: logging levels are fixed in application.yml" \
               --set "config.$key=TRACE"
           done
