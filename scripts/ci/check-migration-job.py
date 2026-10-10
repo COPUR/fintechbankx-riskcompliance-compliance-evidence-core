@@ -8,7 +8,10 @@ account name.
 - Exactly one Job: a Helm pre-install and pre-upgrade hook with backoffLimit,
   activeDeadlineSeconds and ttlSecondsAfterFinished; restartPolicy Never; pod
   labels app.kubernetes.io/name=<service account> (the mesh grants Aurora
-  egress on it) and app.kubernetes.io/component=db-migration.
+  egress on it) and app.kubernetes.io/component=db-migration, and the label
+  sidecar.istio.io/inject="false" (no annotation says otherwise): Aurora egress
+  is a Kubernetes NetworkPolicy on the name label, so the Job needs no proxy,
+  and without native sidecars an injected proxy keeps the Job from completing.
 - The Job runs the app image with the argument "migrate", takes the
   db-migration secret, the same DB_URL as the app's ConfigMap and DB_USERNAME,
   and has the app's pod and container security contexts. The RDS CA mount and
@@ -26,6 +29,7 @@ import yaml
 
 COMPONENT = ("app.kubernetes.io/component", "db-migration")
 NAME = "app.kubernetes.io/name"
+ISTIO_INJECT = "sidecar.istio.io/inject"
 HOOK, WEIGHT = "helm.sh/hook", "helm.sh/hook-weight"
 
 service_account = sys.argv[1]
@@ -106,6 +110,12 @@ if not problems:
         problems.append(f"Job {name}: pod label {NAME} must be {service_account!r}, got {labels.get(NAME)!r}")
     if labels.get(COMPONENT[0]) != COMPONENT[1]:
         problems.append(f"Job {name}: pod label {COMPONENT[0]} must be {COMPONENT[1]!r}, got {labels.get(COMPONENT[0])!r}")
+    if labels.get(ISTIO_INJECT) != "false":
+        problems.append(f"Job {name}: pod label {ISTIO_INJECT} must be \"false\" (the Job needs no proxy; an injected "
+                        f"proxy keeps it from completing), got {labels.get(ISTIO_INJECT)!r}")
+    annotation = (pod["metadata"].get("annotations") or {}).get(ISTIO_INJECT)
+    if annotation not in (None, "false"):
+        problems.append(f"Job {name}: pod annotation {ISTIO_INJECT} must not turn injection back on, got {annotation!r}")
     if pod["spec"].get("restartPolicy") != "Never":
         problems.append(f"Job {name}: restartPolicy must be Never, got {pod['spec'].get('restartPolicy')!r}")
 
@@ -170,5 +180,5 @@ if not problems:
 
 if problems:
     sys.exit("migration Job check failed:\n  " + "\n  ".join(problems))
-print(f"migration Job: hook pre-install,pre-upgrade, pods {NAME}={service_account} {COMPONENT[0]}={COMPONENT[1]}, "
-      "app image with args [migrate], migration secret only in the Job, no selector matches its pods")
+print(f"migration Job: hook pre-install,pre-upgrade, pods {NAME}={service_account} {COMPONENT[0]}={COMPONENT[1]} "
+      f"{ISTIO_INJECT}=false, app image with args [migrate], migration secret only in the Job, no selector matches its pods")

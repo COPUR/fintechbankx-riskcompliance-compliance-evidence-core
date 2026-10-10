@@ -210,6 +210,14 @@ jobs:
             'job["spec"]["template"]["metadata"]["labels"]["app.kubernetes.io/component"] = "service"'
           reject_mutation "Job pods without the service account name label" \
             'job["spec"]["template"]["metadata"]["labels"]["app.kubernetes.io/name"] = "flyway"'
+          # The Job's pods run without the Istio sidecar: Aurora egress is a NetworkPolicy on the name label, and
+          # without native sidecars an injected proxy keeps the Job from completing.
+          reject_mutation "Job pods with the sidecar injected (podLabels value)" \
+            'job["spec"]["template"]["metadata"]["labels"]["sidecar.istio.io/inject"] = "true"'
+          reject_mutation "Job pods without the sidecar.istio.io/inject label" \
+            'del job["spec"]["template"]["metadata"]["labels"]["sidecar.istio.io/inject"]'
+          reject_mutation "Job pods whose annotation turns injection back on" \
+            'job["spec"]["template"]["metadata"].setdefault("annotations", {})["sidecar.istio.io/inject"] = "true"'
           reject_mutation "a Job that is not a pre-upgrade hook" \
             'job["metadata"]["annotations"]["helm.sh/hook"] = "pre-install"'
           reject_mutation "a Job without ttlSecondsAfterFinished" 'del job["spec"]["ttlSecondsAfterFinished"]'
