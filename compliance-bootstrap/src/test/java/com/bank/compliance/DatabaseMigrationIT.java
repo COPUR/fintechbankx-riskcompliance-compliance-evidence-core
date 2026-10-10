@@ -95,6 +95,18 @@ class DatabaseMigrationIT {
         assertThat(DatabaseMigration.run(arguments)).isNotZero();
     }
 
+    /** The single-user fallback: a db-migration secret holding the runtime role must not migrate (decision 0002). */
+    @Test
+    void theMigrationJobRefusesToRunAsTheRuntimeRole() {
+        String[] arguments = jobAs(JOB_SCHEMA, PostgresTestDatabase.RUNTIME_ROLE, PostgresTestDatabase.RUNTIME_PASSWORD);
+
+        // Thrown by the guard itself (a BeanFactoryPostProcessor), before any connection or Flyway bean.
+        assertThatThrownBy(() -> DatabaseMigration.start(arguments))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("DB_MIGRATION_USERNAME must not be the runtime role DB_USERNAME");
+        assertThat(DatabaseMigration.run(arguments)).isNotZero();
+    }
+
     @Test
     void theServiceStartsAsTheRuntimeRoleAndLeavesTheSchemaHistoryAlone() {
         assertThat(DatabaseMigration.run(job(SERVICE_SCHEMA))).isZero();
@@ -121,11 +133,15 @@ class DatabaseMigrationIT {
 
     /** What the Job's pod gets: DB_URL, DB_USERNAME (the role V7 grants) and the db-migration secret. */
     private static String[] job(String schema) {
+        return jobAs(schema, PostgresTestDatabase.ownerUser(), PostgresTestDatabase.ownerPassword());
+    }
+
+    private static String[] jobAs(String schema, String migrationUser, String migrationPassword) {
         return new String[] {
             "--spring.datasource.url=" + PostgresTestDatabase.url(),
             "--DB_USERNAME=" + PostgresTestDatabase.RUNTIME_ROLE,
-            "--DB_MIGRATION_USERNAME=" + PostgresTestDatabase.ownerUser(),
-            "--DB_MIGRATION_PASSWORD=" + PostgresTestDatabase.ownerPassword(),
+            "--DB_MIGRATION_USERNAME=" + migrationUser,
+            "--DB_MIGRATION_PASSWORD=" + migrationPassword,
             "--spring.flyway.schemas=" + schema,
             "--spring.flyway.default-schema=" + schema,
         };
