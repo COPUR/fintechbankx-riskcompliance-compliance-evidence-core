@@ -22,8 +22,9 @@ import org.springframework.core.env.Environment;
  * sslmode=verify-full, sslrootcert equal to DB_SSL_ROOT_CERT, and no sslfactory,
  * sslhostnameverifier or sslpasswordcallback that would replace the check.
  * spring.datasource.hikari.jdbc-url, which replaces spring.datasource.url in
- * the pool, must also equal it: a verified URL to another database is still
- * another database.
+ * the pool, and spring.flyway.url, which Flyway connects with instead of it,
+ * must also equal it: a verified URL to another database is still another
+ * database.
  *
  * <p>Registered by {@link DatabaseTlsConfiguration} only when DB_SSL_ROOT_CERT is
  * set. Messages name the property, never the URL, which may carry a password.
@@ -34,7 +35,8 @@ public final class DatabaseTlsGuard implements BeanFactoryPostProcessor {
 
     private static final String DATASOURCE_URL = "spring.datasource.url";
     private static final String HIKARI_URL = "spring.datasource.hikari.jdbc-url";
-    private static final List<String> OPTIONAL_URLS = List.of("spring.flyway.url", HIKARI_URL);
+    private static final String FLYWAY_URL = "spring.flyway.url";
+    private static final List<String> OPTIONAL_URLS = List.of(FLYWAY_URL, HIKARI_URL);
     private static final String DRIVER_PROPERTIES = "spring.datasource.hikari.data-source-properties";
     private static final List<String> VERIFICATION_OVERRIDES = List.of(
             "sslfactory", "sslhostnameverifier", "sslpasswordcallback");
@@ -63,12 +65,16 @@ public final class DatabaseTlsGuard implements BeanFactoryPostProcessor {
                 requireVerifiedTls(property, url, rootCert);
             }
         }
-        String hikariUrl = environment.getProperty(HIKARI_URL);
-        if (hikariUrl != null && !hikariUrl.equals(datasourceUrl)) {
-            throw new IllegalStateException(HIKARI_URL + " must equal " + DATASOURCE_URL
-                    + ": the pool connects with it instead of the checked URL");
-        }
+        requireSameUrl(HIKARI_URL, datasourceUrl, "the pool connects with it instead of the checked URL");
+        requireSameUrl(FLYWAY_URL, datasourceUrl, "Flyway connects with it instead of the checked URL");
         refuseSslDriverProperties();
+    }
+
+    private void requireSameUrl(String property, String datasourceUrl, String reason) {
+        String url = environment.getProperty(property);
+        if (url != null && !url.equals(datasourceUrl)) {
+            throw new IllegalStateException(property + " must equal " + DATASOURCE_URL + ": " + reason);
+        }
     }
 
     private static void requireVerifiedTls(String property, String url, String rootCert) {
