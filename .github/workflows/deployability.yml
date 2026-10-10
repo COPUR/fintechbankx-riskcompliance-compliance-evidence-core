@@ -214,6 +214,10 @@ jobs:
           # The relay stays off until the mesh contract gives this namespace MSK egress (runbook step 1).
           grep -q 'OUTBOX_RELAY_ENABLED: "false"' <<<"$rendered"
           helm template ci "$chart" $args --set-string config.OUTBOX_RELAY_ENABLED=true | grep -q 'OUTBOX_RELAY_ENABLED: "true"'
+          # KafkaTlsGuard runs whenever DB_SSL_ROOT_CERT is set (always, in the chart), relay on or off, so the
+          # default env must already give the producer a TLS protocol or no default-cluster pod would start.
+          grep -q 'KAFKA_SECURITY_PROTOCOL: "SASL_SSL"' <<<"$rendered"
+          grep -q 'SPRING_PROFILES_ACTIVE: "kafka-msk"' <<<"$rendered"
           # Migration owner credential: its own ExternalSecret, and the Job cannot run without it.
           grep -q "secretKey: DB_MIGRATION_USERNAME" <<<"$rendered"
           grep -q "name: compliance-evidence-service-db-migration" <<<"$rendered"

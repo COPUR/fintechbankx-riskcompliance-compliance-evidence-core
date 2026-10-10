@@ -18,10 +18,11 @@ import java.util.Set;
  * then the producer's own, then {@code spring.kafka.producer.properties}) and
  * refuses to start unless it is one of {@link #ACCEPTED_PROTOCOLS}.
  *
- * <p>Registered by {@link KafkaTlsConfiguration} only when DB_SSL_ROOT_CERT is
- * set and the relay is on ({@code compliance.outbox.relay.enabled=true}).
- * Local runs and tests have no bundle, so the guard stays off for them.
- * Messages name the property and the value, never a broker address.
+ * <p>Registered by {@link KafkaTlsConfiguration} whenever DB_SSL_ROOT_CERT is
+ * set, relay on or off: the relay flag ({@code compliance.outbox.relay.enabled})
+ * gates publishing only, so a misconfigured producer is caught before the flag
+ * is turned on. Local runs and tests have no bundle, so the guard stays off
+ * for them. Messages name the property and the value, never a broker address.
  */
 public final class KafkaTlsGuard {
 
@@ -41,7 +42,7 @@ public final class KafkaTlsGuard {
         if (protocol == null || !ACCEPTED_PROTOCOLS.contains(protocol.toString())) {
             throw new IllegalStateException("spring.kafka producer " + SECURITY_PROTOCOL
                     + " must be SASL_SSL or SSL while " + DatabaseTlsGuard.ROOT_CERT_PROPERTY
-                    + " is set and the outbox relay is enabled (Amazon MSK with IAM authentication, profile"
+                    + " is set, relay on or off (Amazon MSK with IAM authentication, profile"
                     + " kafka-msk, or Strimzi mutual TLS, profile kafka-strimzi), got "
                     + (protocol == null ? "none (Kafka defaults to PLAINTEXT)" : protocol));
         }

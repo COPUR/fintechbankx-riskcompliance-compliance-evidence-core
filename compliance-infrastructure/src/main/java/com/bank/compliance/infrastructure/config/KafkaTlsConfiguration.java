@@ -9,16 +9,18 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Registers {@link KafkaTlsGuard} when the outbox relay is on and the chart has
- * mounted the RDS CA bundle (DB_SSL_ROOT_CERT), the same condition as
- * {@link DatabaseTlsConfiguration}. The guard verifies while the bean is
+ * Registers {@link KafkaTlsGuard} when the chart has mounted the RDS CA bundle
+ * (DB_SSL_ROOT_CERT), the same and only condition as
+ * {@link DatabaseTlsConfiguration}. The outbox relay flag
+ * ({@code compliance.outbox.relay.enabled}) gates publishing, not this guard:
+ * a pod whose producer would not use TLS is refused before the relay is ever
+ * turned on, not on the day it is. The guard verifies while the bean is
  * created, so the context (and with it the pod) fails to start on a producer
  * that would not use TLS (SASL_SSL for MSK, SSL for Strimzi mutual TLS). Not
- * imported by the migrate-only
- * {@code DatabaseMigration} context, which has no Kafka.
+ * imported by the migrate-only {@code DatabaseMigration} context, which has no
+ * Kafka.
  */
 @Configuration(proxyBeanMethods = false)
-@ConditionalOnProperty(name = "compliance.outbox.relay.enabled", havingValue = "true")
 public class KafkaTlsConfiguration {
 
     @Bean
