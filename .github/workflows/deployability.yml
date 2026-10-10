@@ -115,8 +115,27 @@ jobs:
           reject_render "config.DB_URL must use sslmode=verify-full, exactly once" --set "config.DB_URL=$base?sslmode=verify-full&sslrootcert=$bundle&sslmode=disable"
           reject_render "config.DB_URL must set sslrootcert=$bundle, exactly once" --set "config.DB_URL=$base?sslmode=verify-full&sslrootcert=/tmp/decoy.pem"
           reject_render "config.DB_URL must not set sslfactory" --set "config.DB_URL=$base?sslmode=verify-full&sslrootcert=$bundle&sslfactory=org.postgresql.ssl.NonValidatingFactory"
+          # sslfactoryarg feeds a custom factory; service= loads host, port and TLS settings from a pg_service.conf
+          # entry the chart cannot see.
+          reject_render "config.DB_URL must not set sslfactoryarg" --set "config.DB_URL=$base?sslmode=verify-full&sslrootcert=$bundle&sslfactoryarg=/tmp/decoy.pem"
+          reject_render "config.DB_URL must not set service" --set "config.DB_URL=$base?sslmode=verify-full&sslrootcert=$bundle&service=pgsvc"
+          # PgJDBC reads parameter names case-sensitively (lower case): SSLMODE=verify-full is ignored by the driver, so
+          # a differently-cased TLS parameter is refused instead of being counted as the verified one or let through.
+          reject_render "config.DB_URL must not set SSLMODE" --set "config.DB_URL=$base?SSLMODE=verify-full&sslrootcert=$bundle"
+          reject_render "config.DB_URL must not set SSLROOTCERT" --set "config.DB_URL=$base?sslmode=verify-full&SSLROOTCERT=$bundle"
+          reject_render "config.DB_URL must not set SslFactory" --set "config.DB_URL=$base?sslmode=verify-full&sslrootcert=$bundle&SslFactory=org.postgresql.ssl.NonValidatingFactory"
           reject_render "config.SPRING_DATASOURCE_URL must not be set" --set "config.SPRING_DATASOURCE_URL=$base?sslmode=disable"
           reject_render "config.SPRING_FLYWAY_URL must not be set" --set "config.SPRING_FLYWAY_URL=$base?sslmode=disable"
+          # Every Spring datasource, Flyway, Liquibase and R2DBC key is refused by prefix, not only the URL ones.
+          for key in SPRING_LIQUIBASE_URL SPRING_R2DBC_URL SPRING_DATASOURCE_DRIVER_CLASS_NAME SPRING_FLYWAY_USER 'spring\.r2dbc\.url'; do
+            reject_render "config.${key//\\/} must not be set: config.DB_URL is the only database URL" \
+              --set "config.$key=$base?sslmode=disable"
+          done
+          # ...and every spring.config.* key, including the file name (SPRING_CONFIG_NAME picks another application-*.yml).
+          reject_render "config.SPRING_CONFIG_NAME must not be set: it loads configuration that can override config.DB_URL" \
+            --set config.SPRING_CONFIG_NAME=override
+          reject_render "config.spring.config.name must not be set: it loads configuration that can override config.DB_URL" \
+            --set 'config.spring\.config\.name=override'
           # Spring config locations and imports load property sources that can override DB_URL
           # (spring.datasource.url from a file or configtree), in every relaxed spelling.
           for key in SPRING_CONFIG_IMPORT 'spring\.config\.import' SPRING_CONFIG_IMPORT_0 \
@@ -168,6 +187,12 @@ jobs:
           reject_render "config.spring.profiles.active[1] $local_profile" --set 'config.spring\.profiles\.active\[1\]=local'
           reject_render "config.spring.profiles.active $local_profile" --set 'config.spring\.profiles\.active=kafka-msk\,local'
           reject_render "config.spring.profiles.include $local_profile" --set 'config.spring\.profiles\.include=LOCAL'
+          # The default profile and profile groups are other ways to the same profile.
+          reject_render "config.SPRING_PROFILES_DEFAULT $local_profile" --set config.SPRING_PROFILES_DEFAULT=local
+          reject_render "config.SPRING_PROFILES_DEFAULT_0 $local_profile" --set config.SPRING_PROFILES_DEFAULT_0=local
+          reject_render "config.SPRING_PROFILES_GROUP_KAFKA-MSK $local_profile" --set config.SPRING_PROFILES_GROUP_KAFKA-MSK=local
+          reject_render "config.spring.profiles.group.kafka-msk[0] $local_profile" --set 'config.spring\.profiles\.group\.kafka-msk\[0\]=local'
+          reject_render "config.SPRING_PROFILES_GROUP_KAFKA_MSK $local_profile" --set 'config.SPRING_PROFILES_GROUP_KAFKA_MSK=kafka-msk\, Local'
           # ...but only the profile named local: a name that merely contains it still renders.
           helm template ci "$chart" $args --set 'config.SPRING_PROFILES_ACTIVE=kafka-msk\,localstack' > /dev/null
           # The chart has no extraEnv / env list: config.* is the only route into the pods' environment, so the
