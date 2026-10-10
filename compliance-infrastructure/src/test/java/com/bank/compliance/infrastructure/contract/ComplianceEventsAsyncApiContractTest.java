@@ -67,16 +67,20 @@ class ComplianceEventsAsyncApiContractTest {
     /**
      * The aggregate topic's .vN suffix is the contract's major version. Under ADR-019 section 5 a breaking
      * change to one event is a new eventType (...v2) on the same topic; the topic major changes only for a
-     * key, partition-count or cleanup-policy change.
+     * key, partition-count or cleanup-policy change. Until the spec lands on the catalog's main it is
+     * pre-release and stays at exactly N.0.0 (ADR-019 section 8): every edit, including the per-event to
+     * aggregate topic move, is an edit to 1.0.0, so 1.1.0 and 2.0.0 on a .v1 topic are both wrong. Once
+     * released, relax this to the major only.
      */
     @Test
-    void infoVersionMajorMatchesTheTopicVersion() throws Exception {
+    void infoVersionIsThePreReleaseVersionOfTheTopicMajor() throws Exception {
         Map<String, Object> contract = load("svc-cmp-evidence.yaml");
         String version = (String) path(contract, "info").get("version");
         String topic = (String) path(contract, "channels", "compliance").get("address");
 
         assertThat(topic).matches(".*\\.v[0-9]+$");
-        assertThat(version.split("\\.")[0]).isEqualTo(topic.substring(topic.lastIndexOf(".v") + 2));
+        String topicMajor = topic.substring(topic.lastIndexOf(".v") + 2);
+        assertThat(version).as("pre-release contract on topic %s", topic).isEqualTo(topicMajor + ".0.0");
     }
 
     /**
