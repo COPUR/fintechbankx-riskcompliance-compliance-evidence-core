@@ -57,9 +57,17 @@ run Flyway as a Job: its pods carry `app.kubernetes.io/name=<service account>`
    record, repair or remove a migration. Tests keep `migrate` as the owner
    (`PostgresTestDatabase`). `DatabaseMigrationIT` covers the Job and the
    service.
-5. **`externalSecret.migrationSecretName` is required.** The chart no longer
-   renders without it, so the service can no longer migrate silently as the
-   runtime role.
+5. **`externalSecret.migrationSecretName` is required and is not the runtime
+   secret.** The chart no longer renders without it, so the service can no
+   longer migrate silently as the runtime role; it also refuses the same
+   Secrets Manager name for `migrationSecretName` and `remoteSecretName`
+   (compared trimmed and without a trailing `/`). The single-user fallback is
+   refused in the image too: `MigrationRoleGuard` (a
+   `BeanFactoryPostProcessor`, before any connection) fails the context when
+   both `DB_MIGRATION_USERNAME` and `DB_USERNAME` are known and name the same
+   role, case-insensitively, so a `db-migration` secret that holds the runtime
+   credential exits the Job with 1 (`DatabaseMigrationIT`,
+   `MigrationRoleGuardTest`).
 6. CI (`deploy/helm`, `scripts/ci/check-migration-job.py`) asserts the split.
    The app pods never reference the `db-migration` secret. The Job exists with
    the hooks, limits and labels above. No Service, PDB, NetworkPolicy,
