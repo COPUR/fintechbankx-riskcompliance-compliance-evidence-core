@@ -1,4 +1,4 @@
-{{- include "compliance.validateDatabaseTls" . -}}
+{{- include "compliance.guard" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -7,7 +7,7 @@ metadata:
     {{- include "compliance.labels" . | nindent 4 }}
 spec:
   {{- if not .Values.autoscaling.enabled }}
-  replicas: {{ .Values.replicaCount }}
+  replicas: {{ .Values.replicaCount | int }}
   {{- end }}
   revisionHistoryLimit: 5
   strategy:
@@ -23,7 +23,7 @@ spec:
       labels:
         {{- include "compliance.selectorLabels" . | nindent 8 }}
         # Mesh membership labels required by the platform contract.
-        app: {{ .Values.serviceAccount.name }}
+        app: {{ .Values.serviceAccount.name | quote }}
         version: {{ .Values.image.tag | quote }}
         {{- toYaml .Values.podLabels | nindent 8 }}
       annotations:
@@ -36,18 +36,18 @@ spec:
         traffic.sidecar.istio.io/excludeOutboundPorts: {{ .Values.kafkaClientTls.brokerPort | quote }}
         {{- end }}
     spec:
-      serviceAccountName: {{ .Values.serviceAccount.name }}
+      serviceAccountName: {{ .Values.serviceAccount.name | quote }}
       terminationGracePeriodSeconds: 45
       securityContext:
         {{- include "compliance.podSecurityContext" . | nindent 8 }}
       topologySpreadConstraints:
-        - maxSkew: {{ .Values.topologySpread.maxSkew }}
+        - maxSkew: {{ .Values.topologySpread.maxSkew | int }}
           topologyKey: topology.kubernetes.io/zone
           whenUnsatisfiable: DoNotSchedule
           labelSelector:
             matchLabels:
               {{- include "compliance.selectorLabels" . | nindent 14 }}
-        - maxSkew: {{ .Values.topologySpread.maxSkew }}
+        - maxSkew: {{ .Values.topologySpread.maxSkew | int }}
           topologyKey: kubernetes.io/hostname
           whenUnsatisfiable: ScheduleAnyway
           labelSelector:
@@ -56,12 +56,12 @@ spec:
       containers:
         - name: compliance-evidence-service
           image: {{ include "compliance.image" . | quote }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | quote }}
           ports:
             - name: http
-              containerPort: {{ .Values.service.port }}
+              containerPort: {{ .Values.service.port | int }}
             - name: management
-              containerPort: {{ .Values.service.managementPort }}
+              containerPort: {{ .Values.service.managementPort | int }}
           envFrom:
             - configMapRef:
                 name: {{ include "compliance.name" . }}
@@ -79,17 +79,17 @@ spec:
             - name: KAFKA_TLS_CERT
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.kafkaClientTls.secretName }}
+                  name: {{ .Values.kafkaClientTls.secretName | quote }}
                   key: user.crt
             - name: KAFKA_TLS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.kafkaClientTls.secretName }}
+                  name: {{ .Values.kafkaClientTls.secretName | quote }}
                   key: user.key
             - name: KAFKA_TLS_CA
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.kafkaClientTls.secretName }}
+                  name: {{ .Values.kafkaClientTls.secretName | quote }}
                   key: ca.crt
             {{- end }}
           startupProbe:

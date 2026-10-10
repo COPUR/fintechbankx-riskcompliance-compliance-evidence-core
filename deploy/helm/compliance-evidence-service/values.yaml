@@ -43,26 +43,23 @@ podDisruptionBudget:
 # Non-secret runtime settings, rendered into a ConfigMap.
 config:
   # Terraform output jdbc_url, e.g. jdbc:postgresql://<aurora-writer-endpoint>:5432/db_cmp_evidence_<env>?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem
-  # Rendering fails unless sslmode=verify-full and that sslrootcert each appear exactly once (lower-case
-  # names, as PgJDBC reads them; SSLMODE or SSLROOTCERT is refused) and no sslfactory, sslfactoryarg,
-  # sslhostnameverifier, sslpasswordcallback or service is set; no other config key may start with
-  # SPRING_DATASOURCE, SPRING_FLYWAY, SPRING_LIQUIBASE, SPRING_R2DBC, SPRING_APPLICATION_JSON or
-  # SPRING_CONFIG, none may be a JVM option variable (JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS, _JAVA_OPTIONS,
-  # JAVA_OPTS), a LOGGING_LEVEL_* key or DB_SSL_ROOT_CERT (the chart sets it), and no
-  # SPRING_PROFILES_ACTIVE/INCLUDE/DEFAULT or SPRING_PROFILES_GROUP_* may name local,
-  # in any spelling (keys are matched upper-cased with every non-alphanumeric character dropped; see
-  # _helpers.tpl compliance.refusedConfigKey and the runbook). The Flyway migration Job (schema owner)
-  # gets this URL too.
+  # Every key and value here passes the platform datasource/TLS guard (fbx.guard, vendored from
+  # cicd-templates a4f0072 in templates/_fbx_helpers.tpl) and the chart's own rules (compliance.guard).
+  # DB_URL: jdbc:postgresql: with sslmode=verify-full and sslrootcert=<databaseCa.mountPath>/<key> exactly
+  # once (lower-case names), no sslfactory, sslfactoryarg, sslhostnameverifier, sslpasswordcallback or
+  # service, no '${' or '$('. No key may name a datasource, Flyway, Liquibase, R2DBC, spring.config.*,
+  # spring.profiles.* (kafka.runtime below sets the profile), SSL bundle, fintechbankx.tls.*, JVM option,
+  # LOGGING_LEVEL_* or DB_SSL_ROOT_CERT setting in any spelling; keys are ConfigMap keys
+  # ([-._a-zA-Z0-9]+); every value is one string without '$('. See the runbook for the full list.
+  # The Flyway migration Job (schema owner) gets this URL too.
   DB_URL: ""
   # Runtime role: the service connects as it; the migration Job grants it (V7, V12).
   DB_USERNAME: compliance_evidence_app
   DB_POOL_MAX: "10"
-  # Amazon MSK, IAM auth through the IRSA role (deploy/terraform msk_cluster_arn).
-  # The "kafka-msk" profile in application.yml sets SASL_SSL with AWS_MSK_IAM;
-  # set kafka-strimzi (and kafkaClientTls.enabled) for an in-cluster Strimzi.
+  # Amazon MSK, IAM auth through the IRSA role (deploy/terraform msk_cluster_arn); the profile comes from
+  # kafka.runtime below. The guard requires SASL_SSL with kafka.runtime msk and SSL with strimzi.
   KAFKA_BOOTSTRAP_SERVERS: ""     # MSK bootstrap_brokers_sasl_iam, e.g. b-1.<cluster>.kafka.<region>.amazonaws.com:9098
   KAFKA_SECURITY_PROTOCOL: SASL_SSL
-  SPRING_PROFILES_ACTIVE: kafka-msk
   OIDC_ISSUER_URI: ""
   OIDC_JWK_SET_URI: ""
   OIDC_AUDIENCE: svc-cmp-evidence   # tokens must carry the service id in aud (platform contract)
@@ -75,6 +72,14 @@ config:
   # then override with --set-string config.OUTBOX_RELAY_ENABLED=true (runbook step 5).
   # Screenings are stored and their events wait in the outbox meanwhile.
   OUTBOX_RELAY_ENABLED: "false"
+
+# The only Spring profile the chart renders (SPRING_PROFILES_ACTIVE in the ConfigMap):
+#   msk     -> kafka-msk: Amazon MSK IAM over SASL_SSL (application.yml), the default;
+#   strimzi -> kafka-strimzi: in-cluster Strimzi mutual TLS over SSL; needs kafkaClientTls.enabled and
+#              config.KAFKA_SECURITY_PROTOCOL=SSL.
+# No config key may set a profile.
+kafka:
+  runtime: msk
 
 # Amazon RDS CA bundle for Aurora TLS with certificate and host-name verification
 # (cicd-templates 4f0f266). ConfigMap rds-ca-bundle (key global-bundle.pem) is
@@ -130,7 +135,7 @@ migrationJob:
 # No NetworkPolicy in this chart: ingress (payments, istio-ingress, observability)
 # is owned by the service-mesh repository (mesh #11, 128e19d).
 
-# Strimzi only (SPRING_PROFILES_ACTIVE=kafka-strimzi): maps the client
+# Strimzi only (kafka.runtime strimzi, which requires it): maps the client
 # certificate, key and cluster CA from this Secret (keys user.crt, user.key,
 # ca.crt) to KAFKA_TLS_CERT/KEY/CA, and keeps the sidecar off Kafka's own mTLS.
 kafkaClientTls:

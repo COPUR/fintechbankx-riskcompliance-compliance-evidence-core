@@ -92,8 +92,8 @@ jobs:
             echo "chart must not ship a NetworkPolicy, mesh policies or its own SecretStore" >&2
             exit 1
           fi
-          grep -q "name: aws-secrets-manager" <<<"$rendered"
-          grep -q "app: compliance-evidence-service" <<<"$rendered"
+          grep -q 'name: "aws-secrets-manager"' <<<"$rendered"
+          grep -q 'app: "compliance-evidence-service"' <<<"$rendered"
           # Platform outbox alerts key on service_id, scraped from the pod label; a wrong render must fail.
           python3 scripts/ci/check-service-id-label.py svc-cmp-evidence <<<"$rendered"
           # Platform component label (cicd-templates 335a345) on the pods and in every selector.
@@ -106,7 +106,7 @@ jobs:
           if sed '/readOnly: true/d' <<<"$rendered" | python3 scripts/ci/check-database-ca.py 2>/dev/null; then
             echo "database CA check accepted a mount without readOnly" >&2; exit 1
           fi
-          if sed 's/^\( *\)name: rds-ca-bundle$/\1name: rds-ca-bundle\n\1optional: true/' <<<"$rendered" \
+          if sed 's/^\( *\)name: "rds-ca-bundle"$/\1name: rds-ca-bundle\n\1optional: true/' <<<"$rendered" \
               | python3 scripts/ci/check-database-ca.py 2>/dev/null; then
             echo "database CA check accepted an optional rds-ca-bundle volume" >&2; exit 1
           fi
@@ -132,8 +132,8 @@ jobs:
               echo "render with $* failed without \"$want\": $out" >&2; exit 1
             fi
           }
-          reject_render "config.DB_URL must use sslmode=verify-full, exactly once" --set "config.DB_URL=$base?sslmode=verify-full&sslrootcert=$bundle&sslmode=disable"
-          reject_render "config.DB_URL must set sslrootcert=$bundle, exactly once" --set "config.DB_URL=$base?sslmode=verify-full&sslrootcert=/tmp/decoy.pem"
+          reject_render "config.DB_URL must set sslmode exactly once (found 2)" --set "config.DB_URL=$base?sslmode=verify-full&sslrootcert=$bundle&sslmode=disable"
+          reject_render "config.DB_URL must set sslrootcert=$bundle exactly once" --set "config.DB_URL=$base?sslmode=verify-full&sslrootcert=/tmp/decoy.pem"
           reject_render "config.DB_URL must not set sslfactory" --set "config.DB_URL=$base?sslmode=verify-full&sslrootcert=$bundle&sslfactory=org.postgresql.ssl.NonValidatingFactory"
           # sslfactoryarg feeds a custom factory; service= loads host, port and TLS settings from a pg_service.conf
           # entry the chart cannot see.
@@ -141,44 +141,48 @@ jobs:
           reject_render "config.DB_URL must not set service" --set "config.DB_URL=$base?sslmode=verify-full&sslrootcert=$bundle&service=pgsvc"
           # PgJDBC reads parameter names case-sensitively (lower case): SSLMODE=verify-full is ignored by the driver, so
           # a differently-cased TLS parameter is refused instead of being counted as the verified one or let through.
-          reject_render "config.DB_URL must not set SSLMODE" --set "config.DB_URL=$base?SSLMODE=verify-full&sslrootcert=$bundle"
-          reject_render "config.DB_URL must not set SSLROOTCERT" --set "config.DB_URL=$base?sslmode=verify-full&SSLROOTCERT=$bundle"
-          reject_render "config.DB_URL must not set SslFactory" --set "config.DB_URL=$base?sslmode=verify-full&sslrootcert=$bundle&SslFactory=org.postgresql.ssl.NonValidatingFactory"
-          reject_render "config.SPRING_DATASOURCE_URL must not be set" --set "config.SPRING_DATASOURCE_URL=$base?sslmode=disable"
-          reject_render "config.SPRING_FLYWAY_URL must not be set" --set "config.SPRING_FLYWAY_URL=$base?sslmode=disable"
+          reject_render "config.DB_URL must spell SSLMODE in lower case" --set "config.DB_URL=$base?SSLMODE=verify-full&sslrootcert=$bundle"
+          reject_render "config.DB_URL must spell SSLROOTCERT in lower case" --set "config.DB_URL=$base?sslmode=verify-full&SSLROOTCERT=$bundle"
+          reject_render "config.DB_URL must not set sslfactory (it can bypass" --set "config.DB_URL=$base?sslmode=verify-full&sslrootcert=$bundle&SslFactory=org.postgresql.ssl.NonValidatingFactory"
+          reject_render "config.SPRING_DATASOURCE_URL is not allowed: it can redirect or override the datasource" --set "config.SPRING_DATASOURCE_URL=$base?sslmode=disable"
+          reject_render "config.SPRING_FLYWAY_URL is not allowed: it can redirect or override the datasource" --set "config.SPRING_FLYWAY_URL=$base?sslmode=disable"
           # Every Spring datasource, Flyway, Liquibase and R2DBC key is refused by prefix, not only the URL ones.
           for key in SPRING_LIQUIBASE_URL SPRING_R2DBC_URL SPRING_DATASOURCE_DRIVER_CLASS_NAME SPRING_FLYWAY_USER 'spring\.r2dbc\.url'; do
-            reject_render "config.${key//\\/} must not be set: config.DB_URL is the only database URL" \
+            reject_render "config.${key//\\/} is not allowed: it can redirect or override the datasource" \
               --set "config.$key=$base?sslmode=disable"
           done
           # ...and every spring.config.* key, including the file name (SPRING_CONFIG_NAME picks another application-*.yml).
-          reject_render "config.SPRING_CONFIG_NAME must not be set: it loads configuration that can override config.DB_URL" \
+          reject_render "config.SPRING_CONFIG_NAME is not allowed: a spring.config.* property" \
             --set config.SPRING_CONFIG_NAME=override
-          reject_render "config.spring.config.name must not be set: it loads configuration that can override config.DB_URL" \
+          reject_render "config.spring.config.name is not allowed: a spring.config.* property" \
             --set 'config.spring\.config\.name=override'
           # Spring config locations and imports load property sources that can override DB_URL
           # (spring.datasource.url from a file or configtree), in every relaxed spelling.
           for key in SPRING_CONFIG_IMPORT 'spring\.config\.import' SPRING_CONFIG_IMPORT_0 \
               SPRING_CONFIG_ADDITIONAL_LOCATION SPRING_CONFIG_ADDITIONALLOCATION 'spring\.config\.additional-location' \
               SPRING_CONFIG_LOCATION 'spring\.config\.location' 'spring_config_location'; do
-            reject_render "config.${key//\\/} must not be set: it loads configuration that can override config.DB_URL" \
+            reject_render "config.${key//\\/} is not allowed: a spring.config.* property" \
               --set "config.$key=optional:file:/tmp/override.yml"
           done
           # Keys are matched after normalisation (upper case, every non-alphanumeric character dropped), so a
           # dash inside an element, a dot or an index cannot spell a refused key past the check.
-          reject_render "config.SPRING_DATA-SOURCE_URL must not be set: config.DB_URL is the only database URL" \
+          reject_render "config.SPRING_DATA-SOURCE_URL is not allowed: it can redirect or override the datasource" \
             --set "config.SPRING_DATA-SOURCE_URL=$base?sslmode=disable"
-          reject_render "config.SPRING_FLY-WAY_URL must not be set: config.DB_URL is the only database URL" \
+          reject_render "config.SPRING_FLY-WAY_URL is not allowed: it can redirect or override the datasource" \
             --set "config.SPRING_FLY-WAY_URL=$base?sslmode=disable"
-          reject_render "config.SPRING_APPLICATION-JSON must not be set: config.DB_URL is the only database URL" \
+          reject_render "config.SPRING_APPLICATION-JSON is not allowed: it can redirect or override the datasource" \
             --set 'config.SPRING_APPLICATION-JSON=spring.datasource.url=jdbc:postgresql://x/db'
-          reject_render "config.SPRING_CONFIG_IM-PORT must not be set: it loads configuration that can override config.DB_URL" \
+          reject_render "config.SPRING_CONFIG_IM-PORT is not allowed: a spring.config.* property" \
             --set "config.SPRING_CONFIG_IM-PORT=optional:file:/tmp/override.yml"
-          reject_render "config.spring.config.import[1] must not be set: it loads configuration that can override config.DB_URL" \
+          reject_render "config.spring.config.import[1] is not allowed: a spring.config.* property" \
             --set 'config.spring\.config\.import\[1\]=optional:configtree:/tmp/override/'
           # JVM option variables add system properties (-Dspring.datasource.url=..., -Dspring.config.import=...)
-          # that outrank every environment variable, so none may come from install-time values.
-          for key in JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS JAVA_OPTS JAVA_TOOL-OPTIONS 'java\.tool\.options'; do
+          # that outrank every environment variable, so none may come from install-time values. The guard checks the
+          # value of the three the JVM reads; the chart refuses those and the other spellings whatever the value.
+          for key in JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS; do
+            reject_render "config.$key must not mention datasource" --set "config.$key=-Dspring.datasource.url=$base?sslmode=disable"
+          done
+          for key in JAVA_OPTS JAVA_TOOL-OPTIONS 'java\.tool\.options'; do
             reject_render "config.${key//\\/} must not be set: JVM options can override config.DB_URL and the TLS settings" \
               --set "config.$key=-Dspring.datasource.url=$base?sslmode=disable"
           done
@@ -191,14 +195,15 @@ jobs:
           # DB_SSL_ROOT_CERT switches on the TLS startup assertions (DatabaseTlsGuard, KafkaTlsGuard); the chart
           # sets it from the mounted bundle on every container, so a values key, empty or set, is refused.
           for key in DB_SSL_ROOT_CERT 'db\.ssl\.root\.cert' db-ssl-root-cert DBSSLROOTCERT; do
-            reject_render "config.${key//\\/} must not be set: the chart sets DB_SSL_ROOT_CERT from the mounted RDS CA bundle" \
-              --set "config.$key="
-            reject_render "config.${key//\\/} must not be set: the chart sets DB_SSL_ROOT_CERT from the mounted RDS CA bundle" \
-              --set "config.$key=/tmp/decoy.pem"
+            reject_render "config.${key//\\/} is not allowed: a TLS parameter name can replace the mounted CA" --set "config.$key="
+            reject_render "config.${key//\\/} is not allowed: a TLS parameter name can replace the mounted CA" --set "config.$key=/tmp/decoy.pem"
           done
-          # The local profile (a developer machine) must not be activated or included, in any case, spelling,
-          # index or position of the comma list.
-          local_profile="must not activate the local profile: it is for a developer machine, never for a cluster"
+          # ...and the chart's normalised rule, in a spelling the guard's canonical form keeps apart.
+          reject_render "config.DB_SS.L_ROOT_CERT must not be set: the chart sets DB_SSL_ROOT_CERT from the mounted RDS CA bundle" \
+            --set 'config.DB_SS\.L_ROOT_CERT=/tmp/decoy.pem'
+          # No profile comes from config (the chart renders the only one, from kafka.runtime), so the local profile
+          # (a developer machine) cannot be activated, included, defaulted or grouped in, in any case, spelling or index.
+          local_profile="is not allowed: a profile can activate an application-<profile> config in the image (e.g. local)"
           reject_render "config.SPRING_PROFILES_ACTIVE $local_profile" --set config.SPRING_PROFILES_ACTIVE=local
           reject_render "config.SPRING_PROFILES_ACTIVE $local_profile" --set 'config.SPRING_PROFILES_ACTIVE=Kafka-Strimzi\,LOCAL'
           reject_render "config.SPRING_PROFILES_ACTIVE $local_profile" --set 'config.SPRING_PROFILES_ACTIVE=x \, local'
@@ -213,18 +218,17 @@ jobs:
           reject_render "config.SPRING_PROFILES_GROUP_KAFKA-MSK $local_profile" --set config.SPRING_PROFILES_GROUP_KAFKA-MSK=local
           reject_render "config.spring.profiles.group.kafka-msk[0] $local_profile" --set 'config.spring\.profiles\.group\.kafka-msk\[0\]=local'
           reject_render "config.SPRING_PROFILES_GROUP_KAFKA_MSK $local_profile" --set 'config.SPRING_PROFILES_GROUP_KAFKA_MSK=kafka-msk\, Local'
-          # ...but only the profile named local: a name that merely contains it still renders.
-          helm template ci "$chart" $args --set 'config.SPRING_PROFILES_ACTIVE=kafka-msk\,localstack' > /dev/null
           # A config value is one string: a list or map would render as its Go form ("[local]", "map[...]") and
-          # carry a refused name past the value check.
-          reject_render "config.SPRING_PROFILES_ACTIVE must be a single string" --set 'config.SPRING_PROFILES_ACTIVE={local}'
+          # carry a refused name past the value checks.
+          reject_render "config.SPRING_PROFILES_ACTIVE $local_profile" --set 'config.SPRING_PROFILES_ACTIVE={local}'
+          reject_render "config.SERVICE_CALLERS must be a single string" --set 'config.SERVICE_CALLERS={svc-a,svc-b}'
           reject_render "config.OIDC_AUDIENCE must be a single string" --set 'config.OIDC_AUDIENCE={svc-cmp-evidence,other}'
-          # The chart has no extraEnv / env list: config.* is the only route into the pods' environment, so the
-          # refusal above covers every values key. Adding such a list must wire it through the same check.
-          if grep -qE '^(extraEnv|extraEnvFrom|env|envFrom):' "$chart/values.yaml"; then
-            echo "values.yaml gained an env list; route it through compliance.validateDatabaseTls first" >&2; exit 1
+          # The chart has no extraEnv / env list: config.* is the only values route into the pods' environment, so
+          # the guard's adapter (compliance.guard) passes none. Adding such a list must map it in the adapter.
+          if grep -qE '^(extraEnv|extraEnvFrom|env|envFrom|javaToolOptions):' "$chart/values.yaml"; then
+            echo "values.yaml gained an env list; map it in the fbx.guard adapter (compliance.guard) first" >&2; exit 1
           fi
-          reject_render "config.DB_URL must use sslmode=verify-full, exactly once" --set "config.DB_URL=$base?sslmode=require&applicationName=sslmode=verify-full"
+          reject_render "config.DB_URL must use sslmode=verify-full (with sslrootcert=$bundle)" --set "config.DB_URL=$base?sslmode=require&applicationName=sslmode=verify-full"
           # Vendored guard (cicd-templates a4f0072; fbx.guard through compliance.guard). The chart renders the only
           # Spring profile from kafka.runtime (msk -> kafka-msk, strimzi -> kafka-strimzi); no config key sets one.
           helm template ci "$chart" $args --set kafka.runtime=strimzi --set kafkaClientTls.enabled=true \
@@ -257,7 +261,7 @@ jobs:
           reject_render "config.SPRING.PRO.FILES.ACTIVE must not be set: the chart renders the only profile" \
             --set 'config.SPRING\.PRO\.FILES\.ACTIVE=kafka-msk'
           reject_render "config.SPRING_DATA.SOURCE_URL must not be set: config.DB_URL is the only database URL" \
-            --set "config.SPRING_DATA\.SOURCE_URL=$base?sslmode=disable"
+            --set "config.SPRING_DATA\.SOURCE_URL=jdbc:postgresql://other:5432/db?sslmode=verify-full&sslrootcert=$bundle"
           # Kubernetes expands $(VAR) in a container env value from earlier entries and the envFrom Secret: the
           # migration Job's DB_USERNAME=$(DB_MIGRATION_USERNAME) would make the runtime role the schema owner.
           reject_render "config.DB_USERNAME must not contain '\$('" --set 'config.DB_USERNAME=$(DB_MIGRATION_USERNAME)'
@@ -312,14 +316,14 @@ jobs:
             echo "service-id label check accepted a wrong label" >&2; exit 1
           fi
           # The relay stays off until the mesh contract gives this namespace MSK egress (runbook step 1).
-          grep -q 'OUTBOX_RELAY_ENABLED: "false"' <<<"$rendered"
-          helm template ci "$chart" $args --set-string config.OUTBOX_RELAY_ENABLED=true | grep -q 'OUTBOX_RELAY_ENABLED: "true"'
+          grep -q '"OUTBOX_RELAY_ENABLED": "false"' <<<"$rendered"
+          helm template ci "$chart" $args --set-string config.OUTBOX_RELAY_ENABLED=true | grep -q '"OUTBOX_RELAY_ENABLED": "true"'
           # KafkaTlsGuard runs whenever DB_SSL_ROOT_CERT is set (always, in the chart), relay on or off, so the
           # default env must already give the producer a TLS protocol or no default-cluster pod would start.
-          grep -q 'KAFKA_SECURITY_PROTOCOL: "SASL_SSL"' <<<"$rendered"
+          grep -q '"KAFKA_SECURITY_PROTOCOL": "SASL_SSL"' <<<"$rendered"
           grep -q 'SPRING_PROFILES_ACTIVE: "kafka-msk"' <<<"$rendered"
           # Migration owner credential: its own ExternalSecret, and the Job cannot run without it.
-          grep -q "secretKey: DB_MIGRATION_USERNAME" <<<"$rendered"
+          grep -q 'secretKey: "DB_MIGRATION_USERNAME"' <<<"$rendered"
           grep -q "name: compliance-evidence-service-db-migration" <<<"$rendered"
           reject_render "externalSecret.migrationSecretName is required" --set externalSecret.migrationSecretName=
           # ...and it must be another secret than the runtime one: a single credential for both would run Flyway
@@ -395,7 +399,6 @@ jobs:
           # Platform metric tags: app = the service account, squad = compliance (application.yml reads both).
           grep -qx "  METRICS_APP: \"$sa\"" <<<"$rendered"
           grep -qx '  METRICS_SQUAD: "compliance"' <<<"$rendered"
-          helm template ci "$chart" $args --set kafkaClientTls.enabled=true --set config.SPRING_PROFILES_ACTIVE=kafka-strimzi > /dev/null
       - name: Strict schema validation of the rendered chart
         shell: bash
         run: |

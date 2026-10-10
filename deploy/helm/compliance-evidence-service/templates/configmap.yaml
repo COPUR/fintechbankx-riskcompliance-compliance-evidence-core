@@ -9,7 +9,12 @@ metadata:
     {{- include "compliance.labels" . | nindent 4 }}
 data:
   {{- range $key, $value := .Values.config }}
-  {{ $key }}: {{ $value | quote }}
+  {{ $key | quote }}: {{ $value | quote }}
+  {{- end }}
+  # The only Spring profile: kafka.runtime msk -> kafka-msk (Amazon MSK IAM over SASL_SSL), strimzi ->
+  # kafka-strimzi (Strimzi mutual TLS over SSL). No config key may set a profile (compliance.guard).
+  {{- with include "fbx.kafkaProfile" (dict "Values" (dict "kafka" (.Values.kafka | default dict))) }}
+  SPRING_PROFILES_ACTIVE: {{ . | quote }}
   {{- end }}
   # Common metric tags (application.yml management.metrics.tags): app = service account, squad = owner.
   METRICS_APP: {{ .Values.serviceAccount.name | quote }}
