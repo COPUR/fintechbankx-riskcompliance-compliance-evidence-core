@@ -11,12 +11,12 @@ import org.springframework.core.env.Profiles;
 import org.springframework.core.type.AnnotatedTypeMetadata;
 
 /**
- * The switch of the startup assertions ({@link DatabaseTlsGuard},
- * {@link KafkaTlsGuard} and the service's runtime role guard). They are on by
- * default, wherever the service or its migrate-only Job runs: a runtime
- * outside the chart gets the same refusal as a pod. Only two things turn them
- * off, and neither can come from the chart (the vendored guard refuses every
- * profile and fintechbankx.tls.* config key):
+ * The switch of the startup assertions. They are on by default, wherever the
+ * service or its migrate-only Job runs: a runtime outside the chart gets the
+ * same refusal as a pod. Only two things turn the TLS assertions
+ * ({@link DatabaseTlsGuard}, {@link KafkaTlsGuard}) off, and neither can come
+ * from the chart (the vendored guard refuses every profile and
+ * fintechbankx.tls.* config key):
  * <ul>
  * <li>the Spring profile {@value #LOCAL_PROFILE}, by its exact name (a
  * developer machine or an ephemeral environment without the RDS CA bundle);</li>
@@ -25,23 +25,30 @@ import org.springframework.core.type.AnnotatedTypeMetadata;
  * shipped application*.yml.</li>
  * </ul>
  * When they are off, {@link OffWarning} logs it at WARN before any connection
- * exists.
+ * exists. The service's runtime role assertion is off with the local profile
+ * only (a single-user local run is its own schema owner): tests connect as a
+ * least-privilege runtime role and need no switch for it, so the test
+ * property leaves it on ({@link NotLocal}).
  */
 public final class StartupAssertions {
 
     public static final String ENFORCE_PROPERTY = "fintechbankx.tls.enforce";
     public static final String LOCAL_PROFILE = "local";
     static final String OFF_MESSAGE = "TLS startup assertions are off (profile " + LOCAL_PROFILE + " or "
-            + ENFORCE_PROPERTY + "=false): the database URL, the RDS CA bundle, the Kafka producer protocol and the"
-            + " runtime role's privileges are not checked. Only a local run or a test may start this way.";
+            + ENFORCE_PROPERTY + "=false): the database URL, the RDS CA bundle and the Kafka producer protocol are"
+            + " not checked. Only a local run or a test may start this way.";
 
     private StartupAssertions() {
     }
 
+    /** The TLS assertions: on unless the local profile or the test switch turns them off. */
     public static boolean enabled(Environment environment) {
-        boolean local = environment.acceptsProfiles(Profiles.of(LOCAL_PROFILE));
         boolean switchedOff = "false".equals(environment.getProperty(ENFORCE_PROPERTY, "").trim());
-        return !local && !switchedOff;
+        return !local(environment) && !switchedOff;
+    }
+
+    public static boolean local(Environment environment) {
+        return environment.acceptsProfiles(Profiles.of(LOCAL_PROFILE));
     }
 
     /** {@code @Conditional}: the assertions are on (the default). */
@@ -57,6 +64,14 @@ public final class StartupAssertions {
         @Override
         public boolean matches(ConditionContext context, AnnotatedTypeMetadata metadata) {
             return !enabled(context.getEnvironment());
+        }
+    }
+
+    /** {@code @Conditional}: not the local profile (the runtime role assertion; the test switch leaves it on). */
+    public static final class NotLocal implements Condition {
+        @Override
+        public boolean matches(ConditionContext context, AnnotatedTypeMetadata metadata) {
+            return !local(context.getEnvironment());
         }
     }
 

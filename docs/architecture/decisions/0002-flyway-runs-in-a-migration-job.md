@@ -58,9 +58,18 @@ run Flyway as a Job: its pods carry `app.kubernetes.io/name=<service account>`
    checks the schema history and the service refuses to start while a
    migration is pending or an applied one differs. V12 grants the runtime role
    `SELECT` only on `flyway_schema_history`, so it can read the history but not
-   record, repair or remove a migration. Tests keep `migrate` as the owner
+   record, repair or remove a migration. After that validate, `RuntimeRoleGuard`
+   (`RuntimeRoleConfiguration`, service context only, never the Job) asserts on
+   the service's own pool that `current_user` is not a member of the owner of
+   `compliance_screening`, owns no table in the schema, has no `CREATE` on it
+   and no `UPDATE`, `DELETE`, `TRUNCATE` or `TRIGGER` on the evidence; any
+   finding fails the context without naming the role or a credential. It is
+   on by default like the TLS assertions and off only with the `local`
+   profile (a single-user local run is its own owner); the test switch
+   `fintechbankx.tls.enforce=false` leaves it on, and the integration tests
+   run it as the least-privilege runtime role. Tests keep `migrate` as the owner
    (`PostgresTestDatabase`). `DatabaseMigrationIT` covers the Job and the
-   service.
+   service, `RuntimeRoleGuardIT` each privilege with a scratch role.
 5. **`externalSecret.migrationSecretName` is required and is not the runtime
    secret.** The chart no longer renders without it, so the service can no
    longer migrate silently as the runtime role; it also refuses the same

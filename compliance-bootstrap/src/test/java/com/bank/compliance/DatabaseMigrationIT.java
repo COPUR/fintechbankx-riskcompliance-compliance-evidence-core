@@ -131,6 +131,8 @@ class DatabaseMigrationIT {
 
         try (ConfigurableApplicationContext service = service()) {
             assertThat(service.isRunning()).isTrue();
+            assertThat(service.getBean(RuntimeRoleGuard.class))
+                .as("the runtime role assertion ran and passed (the TLS test switch leaves it on)").isNotNull();
         }
 
         assertThat(appliedVersions(SERVICE_SCHEMA)).isEqualTo(applied);
