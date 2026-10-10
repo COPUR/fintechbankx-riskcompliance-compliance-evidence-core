@@ -122,6 +122,14 @@ variable "tags" {
   type        = map(string)
   description = "Additional tags (cost centre, data classification)."
   default     = {}
+
+  # local.tags reaches every resource, including aws_kms_key.database, which
+  # must stay untagged so the platform External Secrets role cannot decrypt it
+  # (ADR-023). IAM compares tag keys case-insensitively.
+  validation {
+    condition     = !contains([for k in keys(var.tags) : lower(k)], "fintechbankx.io/secrets")
+    error_message = "var.tags must not set fintechbankx.io/secrets: only the secrets KMS key carries it (ADR-023)."
+  }
 }
 
 variable "hpa_max_replicas" {
