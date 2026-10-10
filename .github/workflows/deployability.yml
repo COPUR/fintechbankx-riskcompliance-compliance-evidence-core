@@ -180,6 +180,9 @@ jobs:
       - run: terraform fmt -check -recursive
       - run: terraform init -backend=false -input=false
       - run: terraform validate
+      # Offline runs with a mocked AWS provider (tests/*.tftest.hcl): only the secrets KMS key
+      # carries fintechbankx.io/secrets and var.tags cannot add it.
+      - run: terraform test
 
   data-split:
     name: deploy/data-split-rehearsal
