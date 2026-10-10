@@ -135,24 +135,49 @@ spring.config.import[0], SPRING_CONFIG_IM-PORT and SPRINGCONFIGIMPORT0 are all
 SPRINGCONFIGIMPORT0. The app and the Flyway migration Job (schema owner) share
 DB_URL. The application's DatabaseTlsGuard repeats the URL checks at startup,
 in the Job too.
+
+DB_SSL_ROOT_CERT is refused as a config key, empty or set, in any spelling
+(DBSSLROOTCERT): it is the switch of the TLS startup assertions
+(DatabaseTlsGuard, KafkaTlsGuard run whenever it is set), and the chart sets it
+from the mounted bundle on every container (compliance.databaseCaFile). The
+local profile (a developer machine) is refused in SPRING_PROFILES_ACTIVE and
+SPRING_PROFILES_INCLUDE, also indexed (spring.profiles.active[1],
+SPRING_PROFILES_ACTIVE_0): the value is split on "," and each name trimmed and
+lower-cased, so it is caught in any case and at any position of the list
+(Kafka-Strimzi,LOCAL; x , local). Only the name local itself is refused.
+
+Takes a dict: key (the config key) and value (its value).
 */}}
 {{- define "compliance.refusedConfigKey" -}}
-{{- $name := regexReplaceAll "[^A-Z0-9]" (upper (toString .)) "" -}}
+{{- $key := toString .key -}}
+{{- $name := regexReplaceAll "[^A-Z0-9]" (upper $key) "" -}}
 {{- if regexMatch "^SPRING(DATASOURCE.*URL|DATASOURCEHIKARIDATASOURCEPROPERTIES.*|FLYWAYURL|APPLICATIONJSON)$" $name -}}
-{{- printf "config.%s must not be set: config.DB_URL is the only database URL (sslmode=verify-full)" (toString .) -}}
+{{- printf "config.%s must not be set: config.DB_URL is the only database URL (sslmode=verify-full)" $key -}}
 {{- else if regexMatch "^SPRINGCONFIG(IMPORT|ADDITIONALLOCATION|LOCATION)[0-9]*$" $name -}}
-{{- printf "config.%s must not be set: it loads configuration that can override config.DB_URL" (toString .) -}}
+{{- printf "config.%s must not be set: it loads configuration that can override config.DB_URL" $key -}}
 {{- else if regexMatch "^(JAVATOOLOPTIONS|JDKJAVAOPTIONS|JAVAOPTIONS|JAVAOPTS)$" $name -}}
-{{- printf "config.%s must not be set: JVM options can override config.DB_URL and the TLS settings" (toString .) -}}
+{{- printf "config.%s must not be set: JVM options can override config.DB_URL and the TLS settings" $key -}}
 {{- else if regexMatch "^LOGGINGLEVEL" $name -}}
-{{- printf "config.%s must not be set: logging levels are fixed in application.yml" (toString .) -}}
+{{- printf "config.%s must not be set: logging levels are fixed in application.yml" $key -}}
+{{- else if eq $name "DBSSLROOTCERT" -}}
+{{- printf "config.%s must not be set: the chart sets DB_SSL_ROOT_CERT from the mounted RDS CA bundle, and it switches on the TLS startup assertions (DatabaseTlsGuard, KafkaTlsGuard)" $key -}}
+{{- else if regexMatch "^SPRINGPROFILES(ACTIVE|INCLUDE)[0-9]*$" $name -}}
+{{- $local := false -}}
+{{- range $profile := splitList "," (toString .value) -}}
+{{- if eq (lower (trim $profile)) "local" -}}
+{{- $local = true -}}
+{{- end -}}
+{{- end -}}
+{{- if $local -}}
+{{- printf "config.%s must not activate the local profile: it is for a developer machine, never for a cluster" $key -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 
 {{- define "compliance.validateDatabaseTls" -}}
 {{- $bundle := "/etc/fintechbankx/rds-ca/global-bundle.pem" -}}
-{{- range $key, $_ := .Values.config -}}
-{{- with include "compliance.refusedConfigKey" $key -}}
+{{- range $key, $value := .Values.config -}}
+{{- with include "compliance.refusedConfigKey" (dict "key" $key "value" $value) -}}
 {{- fail . -}}
 {{- end -}}
 {{- end -}}

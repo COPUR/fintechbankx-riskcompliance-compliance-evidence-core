@@ -47,7 +47,8 @@ config:
   # sslfactory, sslhostnameverifier or sslpasswordcallback is set; no other config key may carry a
   # database URL (SPRING_DATASOURCE_*URL, SPRING_FLYWAY_URL, SPRING_APPLICATION_JSON), none may set
   # SPRING_CONFIG_IMPORT, SPRING_CONFIG_ADDITIONAL_LOCATION or SPRING_CONFIG_LOCATION, a JVM option
-  # variable (JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS, _JAVA_OPTIONS, JAVA_OPTS) or a LOGGING_LEVEL_* key,
+  # variable (JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS, _JAVA_OPTIONS, JAVA_OPTS), a LOGGING_LEVEL_* key or
+  # DB_SSL_ROOT_CERT (the chart sets it), and no SPRING_PROFILES_ACTIVE/INCLUDE may name local,
   # in any spelling (keys are matched upper-cased with every non-alphanumeric character dropped; see
   # _helpers.tpl compliance.refusedConfigKey and the runbook). The Flyway migration Job (schema owner)
   # gets this URL too.
