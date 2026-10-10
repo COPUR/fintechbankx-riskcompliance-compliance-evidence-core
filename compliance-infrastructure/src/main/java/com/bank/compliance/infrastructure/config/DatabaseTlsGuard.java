@@ -21,6 +21,9 @@ import org.springframework.core.env.Environment;
  * verify Aurora's certificate and host name against the mounted RDS CA bundle:
  * sslmode=verify-full, sslrootcert equal to DB_SSL_ROOT_CERT, and no sslfactory,
  * sslhostnameverifier or sslpasswordcallback that would replace the check.
+ * spring.datasource.hikari.jdbc-url, which replaces spring.datasource.url in
+ * the pool, must also equal it: a verified URL to another database is still
+ * another database.
  *
  * <p>Registered by {@link DatabaseTlsConfiguration} only when DB_SSL_ROOT_CERT is
  * set. Messages name the property, never the URL, which may carry a password.
@@ -30,8 +33,8 @@ public final class DatabaseTlsGuard implements BeanFactoryPostProcessor {
     static final String ROOT_CERT_PROPERTY = "DB_SSL_ROOT_CERT";
 
     private static final String DATASOURCE_URL = "spring.datasource.url";
-    private static final List<String> OPTIONAL_URLS = List.of(
-            "spring.flyway.url", "spring.datasource.hikari.jdbc-url");
+    private static final String HIKARI_URL = "spring.datasource.hikari.jdbc-url";
+    private static final List<String> OPTIONAL_URLS = List.of("spring.flyway.url", HIKARI_URL);
     private static final String DRIVER_PROPERTIES = "spring.datasource.hikari.data-source-properties";
     private static final List<String> VERIFICATION_OVERRIDES = List.of(
             "sslfactory", "sslhostnameverifier", "sslpasswordcallback");
@@ -52,12 +55,18 @@ public final class DatabaseTlsGuard implements BeanFactoryPostProcessor {
         if (rootCert.isBlank()) {
             throw new IllegalStateException(ROOT_CERT_PROPERTY + " is set but empty: it must name the mounted RDS CA bundle");
         }
-        requireVerifiedTls(DATASOURCE_URL, environment.getProperty(DATASOURCE_URL), rootCert);
+        String datasourceUrl = environment.getProperty(DATASOURCE_URL);
+        requireVerifiedTls(DATASOURCE_URL, datasourceUrl, rootCert);
         for (String property : OPTIONAL_URLS) {
             String url = environment.getProperty(property);
             if (url != null) {
                 requireVerifiedTls(property, url, rootCert);
             }
+        }
+        String hikariUrl = environment.getProperty(HIKARI_URL);
+        if (hikariUrl != null && !hikariUrl.equals(datasourceUrl)) {
+            throw new IllegalStateException(HIKARI_URL + " must equal " + DATASOURCE_URL
+                    + ": the pool connects with it instead of the checked URL");
         }
         refuseSslDriverProperties();
     }
