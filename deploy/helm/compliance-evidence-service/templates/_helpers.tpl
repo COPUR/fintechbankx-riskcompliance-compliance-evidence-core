@@ -24,6 +24,89 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
 {{- end -}}
 
 {{/*
+Flyway migration Job (templates/migration-job.yaml). Its pods carry
+app.kubernetes.io/name=<service account>, on which the mesh grants Aurora
+egress, and app.kubernetes.io/component=db-migration (cicd-templates 335a345);
+every selector of the app pods includes component=service, so none selects
+them. The Job's ServiceAccount, Job and the db-migration ExternalSecret share
+the name <service account>-db-migration.
+*/}}
+{{- define "compliance.migrationName" -}}
+{{ .Values.serviceAccount.name }}-db-migration
+{{- end -}}
+
+{{- define "compliance.migrationSelectorLabels" -}}
+app.kubernetes.io/name: {{ .Values.serviceAccount.name }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: db-migration
+{{- end -}}
+
+{{- define "compliance.migrationLabels" -}}
+{{ include "compliance.migrationSelectorLabels" . }}
+app.kubernetes.io/version: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+{{- end -}}
+
+{{/*
+Hook resources the Job needs on a first install, when no regular resource of
+the release exists yet: created before the Job (lower weight) and deleted once
+every hook has succeeded, so the schema owner's credential exists in the
+namespace only while a migration runs. A failed run leaves them for
+inspection; the next install or upgrade replaces them.
+*/}}
+{{- define "compliance.migrationPrerequisiteHook" -}}
+helm.sh/hook: pre-install,pre-upgrade
+helm.sh/hook-weight: "-10"
+helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+{{- end -}}
+
+{{/* The migration Job reads the schema owner's credential; refuse a render without it. */}}
+{{- define "compliance.requireMigrationSecret" -}}
+{{- if not .Values.externalSecret.enabled -}}
+{{- fail "externalSecret.enabled must be true: the migration Job reads the schema owner's credential (externalSecret.migrationSecretName)" -}}
+{{- end -}}
+{{- $_ := required "externalSecret.migrationSecretName is required: the migration Job runs Flyway as the schema owner (Secrets Manager <env>/<service account>/db-migration)" .Values.externalSecret.migrationSecretName -}}
+{{- end -}}
+
+{{/* Shared by the app pods and the migration Job pods. */}}
+{{- define "compliance.podSecurityContext" -}}
+runAsNonRoot: true
+runAsUser: 10001
+runAsGroup: 10001
+fsGroup: 10001
+seccompProfile:
+  type: RuntimeDefault
+{{- end -}}
+
+{{- define "compliance.containerSecurityContext" -}}
+allowPrivilegeEscalation: false
+readOnlyRootFilesystem: true
+capabilities:
+  drop: ["ALL"]
+{{- end -}}
+
+{{- define "compliance.image" -}}
+{{ required "image.repository is required" .Values.image.repository }}:{{ required "image.tag is required" .Values.image.tag }}
+{{- end -}}
+
+{{/* RDS CA bundle volume. Not optional: without the bundle the pod must not start. */}}
+{{- define "compliance.databaseCaVolume" -}}
+- name: database-ca
+  configMap:
+    name: {{ .Values.databaseCa.configMapName }}
+    items:
+      - key: {{ .Values.databaseCa.key }}
+        path: {{ .Values.databaseCa.key }}
+{{- end -}}
+
+{{- define "compliance.databaseCaMount" -}}
+- name: database-ca
+  mountPath: {{ .Values.databaseCa.mountPath }}
+  readOnly: true
+{{- end -}}
+
+{{/*
 Aurora TLS (cicd-templates 4f0f266): the database connection must verify the
 server certificate and host name against the mounted RDS CA bundle;
 sslmode=require encrypts but trusts any certificate.
@@ -36,9 +119,9 @@ Values are compared undecoded (PgJDBC decodes values, not names), so an encoded
 value fails closed. The
 ConfigMap exports every config key, so a second URL there (SPRING_DATASOURCE_*URL,
 SPRING_FLYWAY_URL, SPRING_APPLICATION_JSON, in any spelling Spring's relaxed
-binding accepts) would override DB_URL and is refused too. The app and Flyway
-(migration owner) share DB_URL. The application's DatabaseTlsGuard repeats the
-URL checks at startup.
+binding accepts) would override DB_URL and is refused too. The app and the
+Flyway migration Job (schema owner) share DB_URL. The application's
+DatabaseTlsGuard repeats the URL checks at startup, in the Job too.
 */}}
 {{- define "compliance.validateDatabaseTls" -}}
 {{- $bundle := "/etc/fintechbankx/rds-ca/global-bundle.pem" -}}

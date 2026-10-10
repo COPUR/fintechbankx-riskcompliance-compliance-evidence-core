@@ -45,8 +45,10 @@ config:
   # Terraform output jdbc_url, e.g. jdbc:postgresql://<aurora-writer-endpoint>:5432/db_cmp_evidence_<env>?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem
   # Rendering fails unless sslmode=verify-full and that sslrootcert each appear exactly once and no
   # sslfactory, sslhostnameverifier or sslpasswordcallback is set; no other config key may carry a
-  # database URL (SPRING_DATASOURCE_*URL, SPRING_FLYWAY_URL, SPRING_APPLICATION_JSON). Flyway (migration owner) uses this URL too.
+  # database URL (SPRING_DATASOURCE_*URL, SPRING_FLYWAY_URL, SPRING_APPLICATION_JSON). The Flyway
+  # migration Job (schema owner) gets this URL too.
   DB_URL: ""
+  # Runtime role: the service connects as it; the migration Job grants it (V7, V12).
   DB_USERNAME: compliance_evidence_app
   DB_POOL_MAX: "10"
   # Amazon MSK, IAM auth through the IRSA role (deploy/terraform msk_cluster_arn).
@@ -88,14 +90,36 @@ externalSecret:
     name: aws-secrets-manager
   # Secrets Manager secret from deploy/terraform output app_db_secret_name.
   remoteSecretName: ""
-  # Secrets Manager secret <env>/compliance-evidence-service/db-migration (Terraform
-  # output migration_db_secret_name): the schema owner's {"username","password"}
-  # for Flyway. Empty: Flyway migrates with the app credential (no privilege split).
+  # Required. Secrets Manager secret <env>/compliance-evidence-service/db-migration
+  # (Terraform output migration_db_secret_name): the schema owner's
+  # {"username","password"}, read only by the migration Job below. The service
+  # pods never mount it.
   migrationSecretName: ""
   refreshInterval: 1h
 
 topologySpread:
   maxSkew: 1
+
+# Flyway migration Job (templates/migration-job.yaml): Helm pre-install and
+# pre-upgrade hook running this image with the argument "migrate" as the schema
+# owner, before any pod of the release starts or is replaced. A failed Job fails
+# the install or upgrade; give helm --timeout more than activeDeadlineSeconds
+# (runbook, "Database migrations"). The pods label themselves
+# app.kubernetes.io/name=<serviceAccount.name>, app.kubernetes.io/component=db-migration.
+migrationJob:
+  # One retry: each migration is transactional in PostgreSQL, so a retry after a
+  # dropped connection starts from the last applied version.
+  backoffLimit: 1
+  activeDeadlineSeconds: 600
+  # Finished Jobs (and their logs) are removed after a day, or replaced by the
+  # next install or upgrade.
+  ttlSecondsAfterFinished: 86400
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 768Mi
 
 # No NetworkPolicy in this chart: ingress (payments, istio-ingress, observability)
 # is owned by the service-mesh repository (mesh #11, 128e19d).
