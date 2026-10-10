@@ -125,6 +125,35 @@ jobs:
             reject_render "config.${key//\\/} must not be set: it loads configuration that can override config.DB_URL" \
               --set "config.$key=optional:file:/tmp/override.yml"
           done
+          # Keys are matched after normalisation (upper case, every non-alphanumeric character dropped), so a
+          # dash inside an element, a dot or an index cannot spell a refused key past the check.
+          reject_render "config.SPRING_DATA-SOURCE_URL must not be set: config.DB_URL is the only database URL" \
+            --set "config.SPRING_DATA-SOURCE_URL=$base?sslmode=disable"
+          reject_render "config.SPRING_FLY-WAY_URL must not be set: config.DB_URL is the only database URL" \
+            --set "config.SPRING_FLY-WAY_URL=$base?sslmode=disable"
+          reject_render "config.SPRING_APPLICATION-JSON must not be set: config.DB_URL is the only database URL" \
+            --set 'config.SPRING_APPLICATION-JSON=spring.datasource.url=jdbc:postgresql://x/db'
+          reject_render "config.SPRING_CONFIG_IM-PORT must not be set: it loads configuration that can override config.DB_URL" \
+            --set "config.SPRING_CONFIG_IM-PORT=optional:file:/tmp/override.yml"
+          reject_render "config.spring.config.import[1] must not be set: it loads configuration that can override config.DB_URL" \
+            --set 'config.spring\.config\.import\[1\]=optional:configtree:/tmp/override/'
+          # JVM option variables add system properties (-Dspring.datasource.url=..., -Dspring.config.import=...)
+          # that outrank every environment variable, so none may come from install-time values.
+          for key in JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS JAVA_OPTS JAVA_TOOL-OPTIONS 'java.tool.options'; do
+            reject_render "config.${key//\\/} must not be set: JVM options can override config.DB_URL and the TLS settings" \
+              --set "config.$key=-Dspring.datasource.url=$base?sslmode=disable"
+          done
+          # Logging levels are fixed in application.yml: an install-time level could turn on wire logging
+          # (org.postgresql, org.apache.kafka), which prints credentials and personal data.
+          for key in LOGGING_LEVEL_ORG_POSTGRESQL LOGGING_LEVEL_ROOT 'logging.level.org.apache.kafka' LOGGING-LEVEL-ORG-POSTGRESQL; do
+            reject_render "config.${key//\\/} must not be set: logging levels are fixed in application.yml" \
+              --set "config.$key=TRACE"
+          done
+          # The chart has no extraEnv / env list: config.* is the only route into the pods' environment, so the
+          # refusal above covers every values key. Adding such a list must wire it through the same check.
+          if grep -qE '^(extraEnv|extraEnvFrom|env|envFrom):' "$chart/values.yaml"; then
+            echo "values.yaml gained an env list; route it through compliance.validateDatabaseTls first" >&2; exit 1
+          fi
           reject_render "config.DB_URL must use sslmode=verify-full, exactly once" --set "config.DB_URL=$base?sslmode=require&applicationName=sslmode=verify-full"
           # Platform scrapes the management port through these pod annotations; the outbox alerts depend on them.
           python3 scripts/ci/check-scrape-annotations.py <<<"$rendered"
