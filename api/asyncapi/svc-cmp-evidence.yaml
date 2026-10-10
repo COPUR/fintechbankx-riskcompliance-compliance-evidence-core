@@ -14,9 +14,9 @@ info:
 
     Implementation status: the service writes ComplianceScreening.Screened to its transactional outbox (sc_cmp_evidence.outbox_event) in the same transaction as the stored screening evidence, and a relay publishes it. A retried screening of the same transaction returns the stored result and publishes nothing. Delivery is at least once, in insertion order (consumers de-duplicate on eventId). Per ADR-021 decision 4 only an event whose payload cannot be sent is parked (and replayed by hand); any other failure holds back later events until it is fixed, so events can be delayed but are not skipped for broker, network or credential problems.
 
-    This contract is unreleased (not on main, topic not created, catalog PR #11 unmerged), so removing the reason codes before release is an edit to version 1.0.0, not a new version; reason codes are restricted data and stay in the synchronous POST response.
+    This contract is unreleased (not on main, topic not created, catalog PR #11 unmerged), so it stays at version 1.0.0 (ADR-019 section 8): removing the reason codes and moving from the per-event topic evt.cmp.compliance.screened.v1 to the aggregate topic are edits to 1.0.0, not new versions; reason codes are restricted data and stay in the synchronous POST response.
 
-    Every message uses the standard envelope (common/event-envelope.yaml). Record key is the aggregateId (the screening id). Topics use cleanup.policy=delete. Adding an optional field is a minor change; any removal, rename or type change is a new major version on a new topic with dual-publish.
+    Every message uses the standard envelope (common/event-envelope.yaml). All events go to one topic per aggregate, `evt.cmp.compliance.v1`, with the record key = aggregateId (the screening id) and the eventType, eventId and correlationId record headers, plus traceparent when the writing request was traced (ADR-019). Consumers read the eventType header and skip event types they do not handle. The topic uses cleanup.policy=delete. Adding an optional field or a new event type is a minor change; a removal, rename or type change in one event is a new event major (eventType ...v2) published on the same topic alongside the old one until consumers move. The topic major changes only for a key, partition-count or cleanup-policy change.
   tags:
   - name: compliance
   - name: evt.cmp.compliance
@@ -46,17 +46,19 @@ servers:
     security:
     - $ref: '#/components/securitySchemes/mtls'
 channels:
-  screened:
-    address: evt.cmp.compliance.screened.v1
-    title: evt.cmp.compliance.screened.v1
-    description: Compliance.ComplianceScreening.Screened.v1. A transaction was screened and its result stored as
-      evidence.
+  compliance:
+    address: evt.cmp.compliance.v1
+    title: evt.cmp.compliance.v1
+    description: 'Every event of the compliance screening aggregate, keyed by aggregateId (the screening id) so that
+      the events of one aggregate instance stay in order in one partition (ADR-019, one topic per aggregate). The
+      eventType record header names the event: Compliance.ComplianceScreening.Screened.v1. Consumers skip event types
+      they do not handle.'
     messages:
       ComplianceScreened:
         $ref: '#/components/messages/ComplianceScreened'
     bindings:
       kafka:
-        topic: evt.cmp.compliance.screened.v1
+        topic: evt.cmp.compliance.v1
         partitions: 3
         replicas: 3
         topicConfiguration:
@@ -71,9 +73,9 @@ operations:
     title: Publish Compliance.ComplianceScreening.Screened.v1
     summary: svc-cmp-evidence publishes Compliance.ComplianceScreening.Screened.v1 through its transactional outbox.
     channel:
-      $ref: '#/channels/screened'
+      $ref: '#/channels/compliance'
     messages:
-    - $ref: '#/channels/screened/messages/ComplianceScreened'
+    - $ref: '#/channels/compliance/messages/ComplianceScreened'
 components:
   schemas:
     EventEnvelope:
@@ -124,7 +126,12 @@ components:
       summary: A transaction was screened and its result stored as evidence.
       contentType: application/json
       headers:
-        $ref: '#/components/schemas/EventHeaders'
+        allOf:
+        - $ref: '#/components/schemas/EventHeaders'
+        - type: object
+          properties:
+            eventType:
+              const: Compliance.ComplianceScreening.Screened.v1
       payload:
         allOf:
         - $ref: '#/components/schemas/EventEnvelope'

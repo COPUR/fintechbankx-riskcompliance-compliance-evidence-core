@@ -9,9 +9,10 @@ import java.util.Map;
 
 /**
  * Turns {@link ComplianceScreenedEvent} into the public envelope of the
- * AsyncAPI contract api/asyncapi/svc-cmp-evidence.yaml: topic
- * evt.cmp.compliance.screened.v1, eventType
- * Compliance.ComplianceScreening.Screened.v1, keyed by the screening id.
+ * AsyncAPI contract api/asyncapi/svc-cmp-evidence.yaml: eventType
+ * Compliance.ComplianceScreening.Screened.v1 on the aggregate topic
+ * evt.cmp.compliance.v1 (ADR-019: one topic per aggregate, the event named by
+ * its eventType header), keyed by the screening id.
  *
  * Only ids, the decision and the screening time are published. Reason codes are restricted
  * data and stay in the synchronous API response.
@@ -22,7 +23,8 @@ public class ComplianceEventEnvelopeFactory {
 
     public static final String PRODUCER = "svc-cmp-evidence";
     public static final String AGGREGATE_TYPE = "ComplianceScreening";
-    public static final String SCREENED_TOPIC = "evt.cmp.compliance.screened.v1";
+    /** Every event of the screening aggregate goes to this one topic (ADR-019 section 1). */
+    public static final String TOPIC = "evt.cmp.compliance.v1";
     public static final String SCREENED_EVENT_TYPE = "Compliance.ComplianceScreening.Screened.v1";
     /** Screening results are insert-only, so the one event of a screening is always version 0. */
     static final long AGGREGATE_VERSION = 0L;
@@ -62,7 +64,7 @@ public class ComplianceEventEnvelopeFactory {
         envelope.put("data", data);
 
         return new OutboxEventJpaEntity(event.eventId(), AGGREGATE_TYPE, aggregateId, AGGREGATE_VERSION,
-            SCREENED_EVENT_TYPE, SCREENED_TOPIC, toJson(envelope), correlationId, traceparent, event.occurredAt());
+            SCREENED_EVENT_TYPE, TOPIC, toJson(envelope), correlationId, traceparent, event.occurredAt());
     }
 
     private String toJson(Map<String, Object> envelope) {
