@@ -58,10 +58,10 @@ config:
   OIDC_AUDIENCE: svc-cmp-evidence   # tokens must carry the service id in aud (platform contract)
   # Client ids (token azp) that may screen and read with the SERVICE role.
   SERVICE_CALLERS: svc-pay-initiation-settlement
-  # Transactional outbox relay to evt.cmp.compliance.screened.v1. Every replica
+  # Transactional outbox relay to the aggregate topic evt.cmp.compliance.v1 (ADR-019). Every replica
   # runs it; a Postgres advisory lock lets one publish at a time.
   # Off until the mesh contract lists msk for compliance-evidence-service
-  # (allow-egress-msk generated for namespace compliance) and the topics exist;
+  # (allow-egress-msk generated for namespace compliance) and the topic exists;
   # then override with --set-string config.OUTBOX_RELAY_ENABLED=true (runbook step 5).
   # Screenings are stored and their events wait in the outbox meanwhile.
   OUTBOX_RELAY_ENABLED: "false"

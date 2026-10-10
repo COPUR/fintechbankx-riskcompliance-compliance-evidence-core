@@ -61,11 +61,15 @@ Packages follow the service guardrails (ADR-028): use case and command in `domai
 
 ### Published events
 
-Contract: [`api/asyncapi/svc-cmp-evidence.yaml`](api/asyncapi/svc-cmp-evidence.yaml) (provider copy). Status: Proposed. The catalog entry for this contract is proposed in fintechbankx-governance-architecture-enablement-asyncapi-catalog PR #11 (not merged), and the topics are not yet created on the platform cluster.
+Contract: [`api/asyncapi/svc-cmp-evidence.yaml`](api/asyncapi/svc-cmp-evidence.yaml) (provider copy). Status: Proposed. The catalog entry for this contract is proposed in fintechbankx-governance-architecture-enablement-asyncapi-catalog PR #11 (not merged), and the topic is not yet created on the platform cluster.
 
-| published_events | Event type | Key | When |
+One topic per aggregate (ADR-019): every event of the screening aggregate goes to `evt.cmp.compliance.v1`, keyed by the aggregate id, so one screening's events stay in order in one partition. The event is named by its `eventType`, in the envelope and in the record header. Every record carries the UTF-8 headers `eventType`, `eventId` and `correlationId` (equal to the envelope), plus `traceparent` when the writing request was traced and `x-fapi-interaction-id`. Consumers read the `eventType` header, handle the types they subscribe to and skip any other type (commit the offset, never fail or dead-letter it), so a new event type on the topic is additive. A breaking change to one event is a new eventType (`...v2`) on the same topic, published alongside the old one until consumers move; the topic major changes only for a key, partition-count or cleanup-policy change.
+
+| Topic | published_events (eventType) | Key | When |
 |---|---|---|---|
-| `evt.cmp.compliance.screened.v1` | `Compliance.ComplianceScreening.Screened.v1` | screening id (`CMP-<uuid>`) | a transaction is screened for the first time; a retry returns the stored result and publishes nothing |
+| `evt.cmp.compliance.v1` | `Compliance.ComplianceScreening.Screened.v1` | screening id (`CMP-<uuid>`) | a transaction is screened for the first time; a retry returns the stored result and publishes nothing |
+
+This service consumes no events (no consumed_events, no consumer group, no DLQ).
 
 Screening facts (amount, currency, sanctions/KYC/PEP flags) are **caller-attested**, all required (an omitted or null currency or flag is a 400; no currency is assumed), and stored with each result together with the rule set version; see [decision 0001](docs/architecture/decisions/0001-screening-facts-are-caller-attested.md). Results are insert-only for the runtime role (V4 trigger, V7 grants); this needs separate owner and runtime roles in each environment (see the runbook).
 

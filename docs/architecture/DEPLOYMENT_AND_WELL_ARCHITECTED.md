@@ -9,7 +9,7 @@ not done yet.
 ```
 payment services ─HTTP─▶ compliance-evidence-service pods (EKS namespace compliance, 3..12, HPA)
                             ├─ JDBC ─▶ Aurora PostgreSQL Serverless v2 (Multi-AZ)
-                            └─ outbox relay ─▶ Amazon MSK (IAM auth) evt.cmp.compliance.screened.v1
+                            └─ outbox relay ─▶ Amazon MSK (IAM auth) evt.cmp.compliance.v1
 ```
 
 | Artifact | Path |
@@ -37,14 +37,14 @@ payment services ─HTTP─▶ compliance-evidence-service pods (EKS namespace c
 The chart ships `OUTBOX_RELAY_ENABLED: "false"`. Preconditions before turning it on:
 
 1. The mesh contract (`fintechbankx-platform-mesh-security-service-mesh`, `contracts/mesh-contract.yaml`) lists `msk` for `compliance-evidence-service`, so allow-egress-msk is generated for namespace `compliance`; without it the default-deny egress drops the relay's connection to MSK port 9098.
-2. Topic `evt.cmp.compliance.screened.v1` exists on MSK (producer only, so no DLQ), and `msk_cluster_arn` is set in Terraform.
+2. Topic `evt.cmp.compliance.v1` exists on MSK (one topic per aggregate, ADR-019; producer only, so no DLQ), and `msk_cluster_arn` is set in Terraform. Records are keyed by the screening id and carry the headers `eventType`, `eventId` and `correlationId` (plus `traceparent` when traced); consumers skip eventTypes they do not handle.
 
 Then deploy with `--set-string config.OUTBOX_RELAY_ENABLED=true` (or set it in the environment's values file). `outbox_pending_events` should drain to 0 and `outbox_parked_rows` stay 0; parked rows are replayed by hand (runbook, "Parked outbox events").
 
 ## Known gaps
 
 - No caller uses the service yet; payments still screen locally.
-- No consumer of `evt.cmp.compliance.screened.v1` yet, and the topic is not yet created on the platform cluster.
+- No consumer of `evt.cmp.compliance.v1` yet, and the topic is not yet created on the platform cluster (the platform's provisioning list must carry `evt.cmp.compliance.v1`, not the retired per-event topic).
 - The mesh contract gives namespace `compliance` no MSK egress yet, so the relay ships off (see above).
 - Screening evidence has no retention or archival job yet; regulatory retention periods still need to be set.
 - The DB roles (owner `compliance_evidence_owner`, runtime `compliance_evidence_app`) are created by a DBA bootstrap step, not by Terraform; Terraform creates their secrets (`db-migration`, `db-app`).

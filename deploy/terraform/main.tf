@@ -215,7 +215,9 @@ data "aws_iam_policy_document" "workload" {
   count = var.msk_cluster_arn == "" ? 0 : 1
 
   # MSK IAM client auth (SASL_SSL / AWS_MSK_IAM): the outbox relay connects
-  # (idempotent producer) and may only write this service's own event namespace.
+  # (idempotent producer) and may only write this service's own event namespace
+  # evt.cmp.compliance (ADR-024). It publishes to one topic, the aggregate topic
+  # evt.cmp.compliance.v1 (ADR-019); there are no per-event topics.
   statement {
     sid       = "ConnectToEventCluster"
     actions   = ["kafka-cluster:Connect", "kafka-cluster:DescribeCluster", "kafka-cluster:WriteDataIdempotently"]

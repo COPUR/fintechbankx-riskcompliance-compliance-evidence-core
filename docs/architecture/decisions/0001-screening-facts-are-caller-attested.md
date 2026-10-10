@@ -27,7 +27,7 @@ stated. Evidence that hides this would overstate what compliance checked.
    version are stored with the decision. A replay of the same `transactionId`
    must state the same customer and the same facts to get the stored result;
    anything else is `409 TRANSACTION_ALREADY_SCREENED` and the evidence is kept.
-3. The facts are not published on `evt.cmp.compliance.screened.v1`; entitled
+3. The facts are not published on `evt.cmp.compliance.v1` (the aggregate topic, ADR-019); entitled
    readers get them through the compliance API.
 
 ## Consequences
