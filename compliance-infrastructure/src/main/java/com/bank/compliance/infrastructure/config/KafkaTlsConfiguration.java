@@ -13,7 +13,8 @@ import org.springframework.context.annotation.Configuration;
  * mounted the RDS CA bundle (DB_SSL_ROOT_CERT), the same condition as
  * {@link DatabaseTlsConfiguration}. The guard verifies while the bean is
  * created, so the context (and with it the pod) fails to start on a producer
- * that would not use SASL_SSL. Not imported by the migrate-only
+ * that would not use TLS (SASL_SSL for MSK, SSL for Strimzi mutual TLS). Not
+ * imported by the migrate-only
  * {@code DatabaseMigration} context, which has no Kafka.
  */
 @Configuration(proxyBeanMethods = false)
