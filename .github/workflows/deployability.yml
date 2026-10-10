@@ -117,6 +117,14 @@ jobs:
           reject_render "config.DB_URL must not set sslfactory" --set "config.DB_URL=$base?sslmode=verify-full&sslrootcert=$bundle&sslfactory=org.postgresql.ssl.NonValidatingFactory"
           reject_render "config.SPRING_DATASOURCE_URL must not be set" --set "config.SPRING_DATASOURCE_URL=$base?sslmode=disable"
           reject_render "config.SPRING_FLYWAY_URL must not be set" --set "config.SPRING_FLYWAY_URL=$base?sslmode=disable"
+          # Spring config locations and imports load property sources that can override DB_URL
+          # (spring.datasource.url from a file or configtree), in every relaxed spelling.
+          for key in SPRING_CONFIG_IMPORT 'spring\.config\.import' SPRING_CONFIG_IMPORT_0 \
+              SPRING_CONFIG_ADDITIONAL_LOCATION SPRING_CONFIG_ADDITIONALLOCATION 'spring\.config\.additional-location' \
+              SPRING_CONFIG_LOCATION 'spring\.config\.location' 'spring_config_location'; do
+            reject_render "config.${key//\\/} must not be set: it loads configuration that can override config.DB_URL" \
+              --set "config.$key=optional:file:/tmp/override.yml"
+          done
           reject_render "config.DB_URL must use sslmode=verify-full, exactly once" --set "config.DB_URL=$base?sslmode=require&applicationName=sslmode=verify-full"
           # Platform scrapes the management port through these pod annotations; the outbox alerts depend on them.
           python3 scripts/ci/check-scrape-annotations.py <<<"$rendered"
