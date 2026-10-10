@@ -90,6 +90,28 @@ run Flyway as a Job: its pods carry `app.kubernetes.io/name=<service account>`
   the Job's pod gives up, and the timings. The chart is checked only by
   rendering, kubeconform and the mutation checks.
 
+## Mesh contract: pending
+
+The db-migration Job is not yet in the mesh contract
+(`fintechbankx-platform-mesh-security-service-mesh`, `contracts/mesh-contract.yaml`).
+Today its pods rely on the name-keyed Aurora NetworkPolicy
+(`allow-egress-aurora` selects `app.kubernetes.io/name=compliance-evidence-service`,
+which the Job's pods carry) and on the namespace DNS policy; they run without
+the sidecar (`sidecar.istio.io/inject: "false"`, above).
+
+The CRC thread has asked the mesh squad, through the project coordinator on
+2026-10-10, to add the workload to the contract: ServiceAccount
+`compliance-evidence-service-db-migration`, selector
+`app.kubernetes.io/component=db-migration`, no sidecar, egress to Aurora and
+DNS only; and to confirm that an un-injected pod in an `istio-injection`
+namespace is acceptable to the mesh's policy (PeerAuthentication STRICT does
+not apply to a pod without a proxy, and the Job makes no mesh-internal calls).
+
+Status: pending the mesh squad's answer. Until it arrives the Job works by the
+name-label policy alone; if the mesh squad keys the Aurora policy on the
+ServiceAccount or the component label instead, the Job needs its own entry
+before that change ships.
+
 ## Reversibility
 
 Reversible. Moving Flyway back into the pods means setting
