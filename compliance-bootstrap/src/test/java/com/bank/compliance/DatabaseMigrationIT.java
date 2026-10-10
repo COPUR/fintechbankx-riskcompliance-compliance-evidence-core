@@ -38,6 +38,9 @@ class DatabaseMigrationIT {
     private static final String RDS_BUNDLE = "/etc/fintechbankx/rds-ca/global-bundle.pem";
     /** The test database has no TLS: the switch is for tests and the local profile only, never a shipped application*.yml. */
     private static final String TLS_ASSERTIONS_OFF = "--fintechbankx.tls.enforce=false";
+    /** A scratch runtime role granted the schema owner: what a wrong DBA bootstrap would produce. */
+    private static final String OWNER_MEMBER_ROLE = "compliance_owner_member_it";
+    private static final String OWNER_MEMBER_PASSWORD = "compliance_owner_member_it";
 
     private static JdbcTemplate owner;
 
@@ -131,6 +134,34 @@ class DatabaseMigrationIT {
         }
 
         assertThat(appliedVersions(SERVICE_SCHEMA)).isEqualTo(applied);
+    }
+
+    /**
+     * The runtime role assertion (after Flyway's validate, on the service's own pool): a runtime role that
+     * can act as the schema owner could disable the trigger or truncate the evidence, so the service refuses
+     * to start as it, naming the property and the finding, never the role or a credential.
+     */
+    @Test
+    void theServiceRefusesToStartAsARuntimeRoleThatIsAMemberOfTheSchemaOwner() {
+        assertThat(DatabaseMigration.run(job(SERVICE_SCHEMA))).isZero();
+        String tableOwner = owner.queryForObject(
+            "select tableowner from pg_tables where schemaname = ? and tablename = 'compliance_screening'",
+            String.class, SERVICE_SCHEMA);
+        owner.execute("drop role if exists " + OWNER_MEMBER_ROLE);
+        owner.execute("create role " + OWNER_MEMBER_ROLE + " login password '" + OWNER_MEMBER_PASSWORD
+            + "' in role " + tableOwner);
+        try {
+            assertThatThrownBy(() -> serviceAs(OWNER_MEMBER_ROLE, OWNER_MEMBER_PASSWORD))
+                .rootCause().isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("DB_USERNAME (the runtime role the service connects as) must be least privilege")
+                .hasMessageContaining("member of the owner")
+                .hasMessageNotContaining(OWNER_MEMBER_ROLE)
+                .hasMessageNotContaining(OWNER_MEMBER_PASSWORD)
+                .hasMessageNotContaining(tableOwner);
+        } finally {
+            owner.execute("drop owned by " + OWNER_MEMBER_ROLE + " cascade");
+            owner.execute("drop role if exists " + OWNER_MEMBER_ROLE);
+        }
     }
 
     @Test
