@@ -199,7 +199,7 @@ jobs:
           BASE_REF: origin/main
         shell: bash
         run: |
-          # Catalog script and lib copied unchanged (asyncapi-catalog b0e31ee, which adds ASYNCAPI_DIR) and run
+          # Catalog script and lib copied unchanged (asyncapi-catalog 44837cc: ASYNCAPI_DIR, aggregate topics evt.<ctx>.<aggregate>.v<N>) and run
           # from the repository root as the catalog's scripts/ci/asyncapi-breaking.sh does; needs fetch-depth 0.
           # A spec not yet on main is "new file (not at base)", skipped.
           npm ci --prefix scripts/ci/asyncapi --ignore-scripts
