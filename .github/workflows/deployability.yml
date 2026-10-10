@@ -195,6 +195,10 @@ jobs:
           reject_render "config.SPRING_PROFILES_GROUP_KAFKA_MSK $local_profile" --set 'config.SPRING_PROFILES_GROUP_KAFKA_MSK=kafka-msk\, Local'
           # ...but only the profile named local: a name that merely contains it still renders.
           helm template ci "$chart" $args --set 'config.SPRING_PROFILES_ACTIVE=kafka-msk\,localstack' > /dev/null
+          # A config value is one string: a list or map would render as its Go form ("[local]", "map[...]") and
+          # carry a refused name past the value check.
+          reject_render "config.SPRING_PROFILES_ACTIVE must be a single string" --set 'config.SPRING_PROFILES_ACTIVE={local}'
+          reject_render "config.OIDC_AUDIENCE must be a single string" --set 'config.OIDC_AUDIENCE={svc-cmp-evidence,other}'
           # The chart has no extraEnv / env list: config.* is the only route into the pods' environment, so the
           # refusal above covers every values key. Adding such a list must wire it through the same check.
           if grep -qE '^(extraEnv|extraEnvFrom|env|envFrom):' "$chart/values.yaml"; then
@@ -222,6 +226,13 @@ jobs:
           grep -q "secretKey: DB_MIGRATION_USERNAME" <<<"$rendered"
           grep -q "name: compliance-evidence-service-db-migration" <<<"$rendered"
           reject_render "externalSecret.migrationSecretName is required" --set externalSecret.migrationSecretName=
+          # ...and it must be another secret than the runtime one: a single credential for both would run Flyway
+          # and the service as the same role, and the insert-only guarantee (decision 0002) would not hold.
+          single_user="externalSecret.migrationSecretName must not be the runtime secret (externalSecret.remoteSecretName)"
+          reject_render "$single_user" --set externalSecret.migrationSecretName=ci/compliance-evidence-service/db-app
+          reject_render "$single_user" --set externalSecret.remoteSecretName=ci/compliance-evidence-service/db-migration
+          reject_render "$single_user" --set externalSecret.migrationSecretName=ci/compliance-evidence-service/db-app/
+          reject_render "$single_user" --set 'externalSecret.migrationSecretName= ci/compliance-evidence-service/db-app '
           # Secrets contract: each ExternalSecret is labelled with the service account and reads only <env>/<sa>/... keys.
           sa="$(python3 -c 'import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))["serviceAccount"]["name"])' "$chart/values.yaml")"
           python3 scripts/ci/check-externalsecrets.py "$sa" <<<"$rendered"
