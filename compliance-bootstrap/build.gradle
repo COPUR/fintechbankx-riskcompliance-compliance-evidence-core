@@ -30,6 +30,8 @@ dependencies {
     runtimeOnly 'software.amazon.msk:aws-msk-iam-auth:2.2.0'
     runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
     runtimeOnly 'org.postgresql:postgresql'
+    // FlywayStartupConfiguration: the service validates, the migration Job (DatabaseMigration) migrates.
+    implementation 'org.flywaydb:flyway-core'
     runtimeOnly 'org.flywaydb:flyway-database-postgresql'
 
     testImplementation testFixtures(project(':compliance-domain'))

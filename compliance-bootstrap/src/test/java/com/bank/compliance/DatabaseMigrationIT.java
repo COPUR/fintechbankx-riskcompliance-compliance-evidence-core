@@ -88,8 +88,9 @@ class DatabaseMigrationIT {
     void theMigrationJobRefusesADatabaseUrlTheDriverWouldNotVerify() {
         String[] arguments = with(job(JOB_SCHEMA), "--DB_SSL_ROOT_CERT=" + RDS_BUNDLE);
 
+        // Thrown by the guard itself (a BeanFactoryPostProcessor), before any connection or Flyway bean.
         assertThatThrownBy(() -> DatabaseMigration.start(arguments))
-            .rootCause().isInstanceOf(IllegalStateException.class)
+            .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("spring.datasource.url must use sslmode=verify-full");
         assertThat(DatabaseMigration.run(arguments)).isNotZero();
     }

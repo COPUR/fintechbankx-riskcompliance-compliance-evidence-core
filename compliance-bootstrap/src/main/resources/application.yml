@@ -31,9 +31,14 @@ spring:
           time_zone: UTC
           batch_size: 50
   flyway:
-    # Migrations run as the schema owner; the pods' datasource is the runtime
-    # role, which V7 grants only SELECT, INSERT on the evidence table. Without
-    # DB_MIGRATION_* (local runs) Flyway uses the app credentials.
+    # The service pods never migrate (compliance.database.flyway below). The
+    # chart's pre-install/pre-upgrade Job runs this image with the argument
+    # "migrate" (DatabaseMigration, profile db-migrate) and the schema owner's
+    # DB_MIGRATION_* from the db-migration secret; the pods have only the runtime
+    # role, which V7 grants SELECT, INSERT on the evidence table and V12 SELECT
+    # on the schema history. Without DB_MIGRATION_* (the pods, local runs) Flyway
+    # uses the app credentials. The history table keeps Flyway's default name
+    # (flyway_schema_history), which V12 grants.
     user: ${DB_MIGRATION_USERNAME:${spring.datasource.username}}
     password: ${DB_MIGRATION_PASSWORD:${spring.datasource.password:}}
     placeholders:
@@ -142,9 +147,28 @@ compliance:
       backoff-initial: ${OUTBOX_RELAY_BACKOFF_INITIAL:PT1S}
       backoff-max: ${OUTBOX_RELAY_BACKOFF_MAX:PT5M}
 
+  database:
+    # validate: at startup Flyway checks the schema history as the runtime role
+    # and the service refuses to start while a migration is pending or an
+    # applied one differs (the Deployment rollout then stalls, old pods keep
+    # serving). migrate: only the migration Job (profile db-migrate) and tests.
+    flyway: validate
+
 logging:
   pattern:
     level: "%5p [${spring.application.name},%X{traceId:-},%X{spanId:-},%X{correlationId:-}]"
+
+---
+# Migration Job (chart templates/migration-job.yaml, image args "migrate"):
+# DatabaseMigration starts only the datasource and Flyway with this profile,
+# migrates as the schema owner and exits.
+spring:
+  config:
+    activate:
+      on-profile: db-migrate
+compliance:
+  database:
+    flyway: migrate
 
 ---
 # Amazon MSK with IAM authentication (SPRING_PROFILES_ACTIVE=kafka-msk, the
