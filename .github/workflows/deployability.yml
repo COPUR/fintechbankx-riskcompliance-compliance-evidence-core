@@ -95,6 +95,27 @@ jobs:
             fi
             grep -q "config.DB_URL must use sslmode=verify-full" <<<"$out"
           done
+          # Ways around a substring check on DB_URL must fail too, each with its own message:
+          # a repeated sslmode (PgJDBC keeps the last), a decoy sslrootcert, a non-validating
+          # sslfactory, a second URL in another config key, and sslmode=verify-full hidden in a value.
+          bundle=/etc/fintechbankx/rds-ca/global-bundle.pem
+          base=jdbc:postgresql://ci:5432/db
+          reject_render() {
+            local want="$1"; shift
+            local out
+            if out="$(helm template ci "$chart" $args "$@" 2>&1)"; then
+              echo "chart rendered with $*" >&2; exit 1
+            fi
+            if ! grep -qF -- "$want" <<<"$out"; then
+              echo "render with $* failed without \"$want\": $out" >&2; exit 1
+            fi
+          }
+          reject_render "config.DB_URL must use sslmode=verify-full, exactly once" --set "config.DB_URL=$base?sslmode=verify-full&sslrootcert=$bundle&sslmode=disable"
+          reject_render "config.DB_URL must set sslrootcert=$bundle, exactly once" --set "config.DB_URL=$base?sslmode=verify-full&sslrootcert=/tmp/decoy.pem"
+          reject_render "config.DB_URL must not set sslfactory" --set "config.DB_URL=$base?sslmode=verify-full&sslrootcert=$bundle&sslfactory=org.postgresql.ssl.NonValidatingFactory"
+          reject_render "config.SPRING_DATASOURCE_URL must not be set" --set "config.SPRING_DATASOURCE_URL=$base?sslmode=disable"
+          reject_render "config.SPRING_FLYWAY_URL must not be set" --set "config.SPRING_FLYWAY_URL=$base?sslmode=disable"
+          reject_render "config.DB_URL must use sslmode=verify-full, exactly once" --set "config.DB_URL=$base?sslmode=require&applicationName=sslmode=verify-full"
           # Platform scrapes the management port through these pod annotations; the outbox alerts depend on them.
           python3 scripts/ci/check-scrape-annotations.py <<<"$rendered"
           if helm template ci "$chart" $args | sed '/prometheus.io\/path:/d' \
