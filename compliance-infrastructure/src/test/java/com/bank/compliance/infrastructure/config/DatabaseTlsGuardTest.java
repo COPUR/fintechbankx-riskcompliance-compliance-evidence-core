@@ -89,6 +89,36 @@ class DatabaseTlsGuardTest {
                 .hasMessageContaining("spring.datasource.hikari.jdbc-url must use sslmode=verify-full");
     }
 
+    /** A verified URL to another database is still another database: the pool must connect with the checked one. */
+    @Test
+    void refusesAHikariJdbcUrlThatDiffersFromTheDatasourceUrlEvenWhenVerified() {
+        String elsewhere = "jdbc:postgresql://other.example:5432/db_other?sslmode=verify-full&sslrootcert=" + BUNDLE;
+        MockEnvironment environment = environment(VALID)
+                .withProperty("spring.datasource.hikari.jdbc-url", elsewhere);
+
+        assertThatThrownBy(() -> new DatabaseTlsGuard(environment).verify())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("spring.datasource.hikari.jdbc-url must equal spring.datasource.url")
+                .message().doesNotContain("other.example");
+    }
+
+    @Test
+    void acceptsAHikariJdbcUrlEqualToTheDatasourceUrl() {
+        MockEnvironment environment = environment(VALID).withProperty("spring.datasource.hikari.jdbc-url", VALID);
+
+        assertThatCode(() -> new DatabaseTlsGuard(environment).verify()).doesNotThrowAnyException();
+    }
+
+    @Test
+    void refusesToStartTheContextWhenTheHikariJdbcUrlPointsElsewhere() {
+        contextRunner
+                .withPropertyValues("DB_SSL_ROOT_CERT=" + BUNDLE, "spring.datasource.url=" + VALID,
+                        "spring.datasource.hikari.jdbc-url=jdbc:postgresql://other.example:5432/db_other"
+                                + "?sslmode=verify-full&sslrootcert=" + BUNDLE)
+                .run(context -> assertThat(context).hasFailed()
+                        .getFailure().hasMessageContaining("spring.datasource.hikari.jdbc-url must equal spring.datasource.url"));
+    }
+
     @Test
     void refusesSslDriverPropertiesOutsideTheUrl() {
         MockEnvironment environment = environment(VALID)
