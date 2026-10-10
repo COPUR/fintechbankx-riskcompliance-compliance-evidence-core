@@ -201,6 +201,15 @@ jobs:
           # ...and the chart's normalised rule, in a spelling the guard's canonical form keeps apart.
           reject_render "config.DB_SS.L_ROOT_CERT must not be set: the chart sets DB_SSL_ROOT_CERT from the mounted RDS CA bundle" \
             --set 'config.DB_SS\.L_ROOT_CERT=/tmp/decoy.pem'
+          # fintechbankx.tls.enforce (FINTECHBANKX_TLS_ENFORCE) is the test switch of the TLS startup assertions, which are
+          # on by default (only the local profile and tests turn them off): refused by the guard in every spelling it
+          # canonicalises, and by the chart's normalised rule in the one it keeps apart.
+          for key in FINTECHBANKX_TLS_ENFORCE 'fintechbankx\.tls\.enforce' FINTECHBANKX-TLS-ENFORCE 'fintechbankx\.tls\.enforce\[0\]'; do
+            reject_render "config.${key//\\/} is not allowed: it can switch off the service's startup TLS assertion" \
+              --set "config.$key=false"
+          done
+          reject_render "config.FINTECHBANKXTLSENFORCE must not be set: fintechbankx.tls.enforce is the test switch of the TLS startup assertions" \
+            --set config.FINTECHBANKXTLSENFORCE=false
           # No profile comes from config (the chart renders the only one, from kafka.runtime), so the local profile
           # (a developer machine) cannot be activated, included, defaulted or grouped in, in any case, spelling or index.
           local_profile="is not allowed: a profile can activate an application-<profile> config in the image (e.g. local)"

@@ -64,7 +64,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * transactional outbox in the same transaction; the relay is off here and is
  * driven explicitly against a mocked Kafka.
  */
-@SpringBootTest(properties = "compliance.outbox.relay.enabled=false")
+// The TLS startup assertions are on by default; the test database has no TLS, so the test
+// switch (test annotations only, never a shipped application*.yml) turns them off here.
+@SpringBootTest(properties = {"compliance.outbox.relay.enabled=false", "fintechbankx.tls.enforce=false"})
 @AutoConfigureMockMvc
 class ComplianceServiceIT {
 

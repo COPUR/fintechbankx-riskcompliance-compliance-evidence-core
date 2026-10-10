@@ -1,7 +1,12 @@
 package com.bank.compliance.infrastructure.config;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.mock.env.MockEnvironment;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -12,8 +17,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * The startup half of the Aurora TLS contract (cicd-templates 4f0f266): the
  * chart's render check can be bypassed by values it never sees, so the service
  * refuses to start unless the driver itself would verify the certificate and
- * host name against the mounted RDS CA bundle.
+ * host name against the mounted RDS CA bundle. The guard is on by default,
+ * wherever the service runs: only the local profile and the test switch
+ * fintechbankx.tls.enforce=false turn it off, and then the log says so.
  */
+@ExtendWith(OutputCaptureExtension.class)
 class DatabaseTlsGuardTest {
 
     private static final String BUNDLE = "/etc/fintechbankx/rds-ca/global-bundle.pem";
@@ -182,11 +190,55 @@ class DatabaseTlsGuardTest {
                 .run(context -> assertThat(context).hasNotFailed().hasSingleBean(DatabaseTlsGuard.class));
     }
 
+    /** On by default: no profile and no switch means the bundle is required, whatever the URL says. */
     @Test
-    void staysInactiveWithoutTheBundleSoLocalRunsAndTestsStart() {
+    void refusesToStartTheContextWithoutTheBundleByDefault() {
         contextRunner
-                .withPropertyValues("spring.datasource.url=" + BASE + "?sslmode=disable")
+                .withPropertyValues("spring.datasource.url=" + BASE + "?sslmode=disable&password=not-for-logs")
+                .run(context -> assertThat(context).hasFailed().getFailure()
+                        .hasMessageContaining("DB_SSL_ROOT_CERT must name the mounted RDS CA bundle")
+                        .hasMessageNotContaining("not-for-logs"));
+        contextRunner
+                .withPropertyValues("spring.datasource.url=" + VALID)
+                .run(context -> assertThat(context).hasFailed().getFailure()
+                        .hasMessageContaining("DB_SSL_ROOT_CERT must name the mounted RDS CA bundle"));
+    }
+
+    @Test
+    void refusesABlankBundlePathByDefault() {
+        contextRunner
+                .withPropertyValues("DB_SSL_ROOT_CERT=", "spring.datasource.url=" + VALID)
+                .run(context -> assertThat(context).hasFailed().getFailure()
+                        .hasMessageContaining("DB_SSL_ROOT_CERT must name the mounted RDS CA bundle"));
+    }
+
+    /** The local profile is the developer's switch: the guard is not registered and the log says so. */
+    @Test
+    void startsWithTheLocalProfileWithoutTheGuardAndLogsThatTheAssertionsAreOff(CapturedOutput output) {
+        contextRunner
+                .withPropertyValues("spring.profiles.active=local", "spring.datasource.url=" + BASE + "?sslmode=disable")
                 .run(context -> assertThat(context).hasNotFailed().doesNotHaveBean(DatabaseTlsGuard.class));
+        assertThat(output.getOut()).contains("WARN").contains("TLS startup assertions are off");
+    }
+
+    /** The test switch (test resources and test annotations only, never a shipped application*.yml). */
+    @Test
+    void startsWithTheTestSwitchWithoutTheGuardAndLogsThatTheAssertionsAreOff(CapturedOutput output) {
+        contextRunner
+                .withPropertyValues("fintechbankx.tls.enforce=false", "spring.datasource.url=" + BASE + "?sslmode=disable")
+                .run(context -> assertThat(context).hasNotFailed().doesNotHaveBean(DatabaseTlsGuard.class));
+        assertThat(output.getOut()).contains("WARN").contains("TLS startup assertions are off");
+    }
+
+    /** Only the exact value false and the exact profile name local turn the guard off. */
+    @ParameterizedTest
+    @ValueSource(strings = {"fintechbankx.tls.enforce=true", "fintechbankx.tls.enforce=", "fintechbankx.tls.enforce=off",
+            "spring.profiles.active=LOCAL", "spring.profiles.active=localstack", "spring.profiles.active=kafka-msk"})
+    void staysOnForAnyOtherValueOrProfile(String property) {
+        contextRunner
+                .withPropertyValues(property, "spring.datasource.url=" + BASE + "?sslmode=disable")
+                .run(context -> assertThat(context).hasFailed().getFailure()
+                        .hasMessageContaining("DB_SSL_ROOT_CERT must name the mounted RDS CA bundle"));
     }
 
     private static DatabaseTlsGuard guard(String url) {

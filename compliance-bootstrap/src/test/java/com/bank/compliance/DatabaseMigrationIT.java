@@ -36,6 +36,8 @@ class DatabaseMigrationIT {
     private static final String JOB_SCHEMA = "sc_cmp_evidence_job_it";
     private static final String SERVICE_SCHEMA = "sc_cmp_evidence";
     private static final String RDS_BUNDLE = "/etc/fintechbankx/rds-ca/global-bundle.pem";
+    /** The test database has no TLS: the switch is for tests and the local profile only, never a shipped application*.yml. */
+    private static final String TLS_ASSERTIONS_OFF = "--fintechbankx.tls.enforce=false";
 
     private static JdbcTemplate owner;
 
@@ -86,12 +88,24 @@ class DatabaseMigrationIT {
     /** The Job gets DB_SSL_ROOT_CERT from the chart like the pods, so DatabaseTlsGuard runs there too. */
     @Test
     void theMigrationJobRefusesADatabaseUrlTheDriverWouldNotVerify() {
-        String[] arguments = with(job(JOB_SCHEMA), "--DB_SSL_ROOT_CERT=" + RDS_BUNDLE);
+        String[] arguments = with(tlsAssertingJob(JOB_SCHEMA), "--DB_SSL_ROOT_CERT=" + RDS_BUNDLE);
 
         // Thrown by the guard itself (a BeanFactoryPostProcessor), before any connection or Flyway bean.
         assertThatThrownBy(() -> DatabaseMigration.start(arguments))
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("spring.datasource.url must use sslmode=verify-full");
+        assertThat(DatabaseMigration.run(arguments)).isNotZero();
+    }
+
+    /** The Job keeps asserting by default: outside the chart, without the bundle, it exits 1 before any connection. */
+    @Test
+    void theMigrationJobRefusesToRunWithoutTheBundleUnlessTheTestSwitchIsSet() {
+        String[] arguments = tlsAssertingJob(JOB_SCHEMA);
+
+        assertThatThrownBy(() -> DatabaseMigration.start(arguments))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("DB_SSL_ROOT_CERT must name the mounted RDS CA bundle")
+            .hasMessageNotContaining(PostgresTestDatabase.ownerPassword());
         assertThat(DatabaseMigration.run(arguments)).isNotZero();
     }
 
@@ -131,8 +145,13 @@ class DatabaseMigrationIT {
             .isZero();
     }
 
-    /** What the Job's pod gets: DB_URL, DB_USERNAME (the role V7 grants) and the db-migration secret. */
+    /** What the Job's pod gets: DB_URL, DB_USERNAME (the role V7 grants) and the db-migration secret; TLS assertions off for the test database. */
     private static String[] job(String schema) {
+        return with(tlsAssertingJob(schema), TLS_ASSERTIONS_OFF);
+    }
+
+    /** The same Job with the TLS assertions on, as in the chart. */
+    private static String[] tlsAssertingJob(String schema) {
         return jobAs(schema, PostgresTestDatabase.ownerUser(), PostgresTestDatabase.ownerPassword());
     }
 
@@ -149,13 +168,18 @@ class DatabaseMigrationIT {
 
     /** What a service pod gets: the runtime role only, no DB_MIGRATION_*, chart-default Flyway mode. */
     private static ConfigurableApplicationContext service(String... extra) {
+        return serviceAs(PostgresTestDatabase.RUNTIME_ROLE, PostgresTestDatabase.RUNTIME_PASSWORD, extra);
+    }
+
+    private static ConfigurableApplicationContext serviceAs(String role, String password, String... extra) {
         String[] arguments = with(new String[] {
             "--spring.datasource.url=" + PostgresTestDatabase.url(),
-            "--DB_USERNAME=" + PostgresTestDatabase.RUNTIME_ROLE,
-            "--spring.datasource.password=" + PostgresTestDatabase.RUNTIME_PASSWORD,
+            "--DB_USERNAME=" + role,
+            "--spring.datasource.password=" + password,
             "--server.port=0",
             "--management.server.port=0",
             "--compliance.outbox.relay.enabled=false",
+            TLS_ASSERTIONS_OFF,
         }, extra);
         return new SpringApplicationBuilder(ComplianceEvidenceApplication.class).run(arguments);
     }
