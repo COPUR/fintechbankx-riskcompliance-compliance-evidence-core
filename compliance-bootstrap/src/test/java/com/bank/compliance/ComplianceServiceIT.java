@@ -166,7 +166,7 @@ class ComplianceServiceIT {
             """);
         assertThat(rows).hasSize(1);
         Map<String, Object> row = rows.getFirst();
-        assertThat(row).containsEntry("topic", "evt.cmp.compliance.screened.v1")
+        assertThat(row).containsEntry("topic", "evt.cmp.compliance.v1")
             .containsEntry("event_type", "Compliance.ComplianceScreening.Screened.v1")
             .containsEntry("payload_event_type", "Compliance.ComplianceScreening.Screened.v1")
             .containsEntry("producer", "svc-cmp-evidence")
@@ -339,13 +339,17 @@ class ComplianceServiceIT {
         assertThat(outbox.countByPublishedAtIsNullAndParkedAtIsNull()).isZero();
         ArgumentCaptor<ProducerRecord<String, String>> record = ArgumentCaptor.forClass(ProducerRecord.class);
         Mockito.verify(kafka).send(record.capture());
-        assertThat(record.getValue().topic()).isEqualTo("evt.cmp.compliance.screened.v1");
+        assertThat(record.getValue().topic()).isEqualTo("evt.cmp.compliance.v1");
         assertThat(record.getValue().key()).isEqualTo(screeningId);
         assertThat(new String(record.getValue().headers().lastHeader("traceparent").value(), java.nio.charset.StandardCharsets.UTF_8))
             .isEqualTo("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
         // The value is the envelope as stored in jsonb: same content, Postgres key order.
         JsonNode envelope = new ObjectMapper().readTree(record.getValue().value());
         assertThat(envelope.get("eventType").asText()).isEqualTo("Compliance.ComplianceScreening.Screened.v1");
+        // ADR-019 section 3: the headers repeat the envelope so consumers route without parsing the value.
+        assertThat(recordHeader(record.getValue(), "eventType")).isEqualTo(envelope.get("eventType").asText());
+        assertThat(recordHeader(record.getValue(), "eventId")).isEqualTo(envelope.get("eventId").asText());
+        assertThat(recordHeader(record.getValue(), "correlationId")).isEqualTo(envelope.get("correlationId").asText());
         assertThat(envelope.at("/data/screeningId").asText()).isEqualTo(screeningId);
         assertThat(envelope.at("/data/decision").asText()).isEqualTo("PASS");
         assertThat(relay.relayOnce()).isZero();
@@ -632,5 +636,11 @@ class ComplianceServiceIT {
         return request.header("x-fapi-interaction-id", "it-interaction-1")
             .with(jwt().jwt(j -> j.subject("svc-pay-initiation-settlement").claim("azp", "svc-pay-initiation-settlement"))
                 .authorities(new SimpleGrantedAuthority("ROLE_SERVICE")));
+    }
+
+    private static String recordHeader(ProducerRecord<String, String> record, String name) {
+        org.apache.kafka.common.header.Header header = record.headers().lastHeader(name);
+        assertThat(header).as("record header %s", name).isNotNull();
+        return new String(header.value(), java.nio.charset.StandardCharsets.UTF_8);
     }
 }

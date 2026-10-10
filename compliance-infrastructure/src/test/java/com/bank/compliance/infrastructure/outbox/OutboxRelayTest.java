@@ -158,7 +158,7 @@ class OutboxRelayTest {
 
     @Test
     void anAuthorisationFailureStopsTheBatchAndParksNothing() {
-        assertStopsTheBatchWithoutParking(new TopicAuthorizationException(Set.of("evt.cmp.compliance.screened.v1")));
+        assertStopsTheBatchWithoutParking(new TopicAuthorizationException(Set.of("evt.cmp.compliance.v1")));
     }
 
     @Test
@@ -291,7 +291,7 @@ class OutboxRelayTest {
     @Test
     void aRetriableOrAuthorisationFailureLastingMoreThan24HoursIsNeverParkedAndTheNextRowIsNotSent() {
         for (Exception failure : List.<Exception>of(new NotEnoughReplicasException("broker unavailable"),
-                new TopicAuthorizationException(Set.of("evt.cmp.compliance.screened.v1")),
+                new TopicAuthorizationException(Set.of("evt.cmp.compliance.v1")),
                 new SaslAuthenticationException("IAM credentials expired"))) {
             org.mockito.Mockito.reset(outbox, kafka);
             OutboxEventJpaEntity head = row("CMP-1");
@@ -324,7 +324,7 @@ class OutboxRelayTest {
     void aNonPayloadFailureMarksNothingOnTheRow() {
         for (Exception failure : List.<Exception>of(new NotEnoughReplicasException("broker unavailable"),
                 new TimeoutException("Topic not present in metadata"),
-                new TopicAuthorizationException(Set.of("evt.cmp.compliance.screened.v1")),
+                new TopicAuthorizationException(Set.of("evt.cmp.compliance.v1")),
                 new SaslAuthenticationException("IAM credentials expired"),
                 new org.apache.kafka.common.KafkaException("unclassified"),
                 new IllegalStateException("producer closed"))) {
@@ -428,13 +428,67 @@ class OutboxRelayTest {
 
         ProducerRecord<String, String> record = OutboxRelay.toRecord(row);
 
-        assertThat(record.topic()).isEqualTo("evt.cmp.compliance.screened.v1");
+        assertThat(record.topic()).isEqualTo("evt.cmp.compliance.v1");
         assertThat(record.key()).isEqualTo("CMP-9");
         assertThat(record.value()).isEqualTo("{}");
         assertThat(header(record, "eventType")).isEqualTo("Compliance.ComplianceScreening.Screened.v1");
         assertThat(header(record, "eventId")).isEqualTo(row.getEventId().toString());
+        assertThat(header(record, "correlationId")).isEqualTo("corr-9");
         assertThat(header(record, "x-fapi-interaction-id")).isEqualTo("corr-9");
         assertThat(record.headers().lastHeader("traceparent")).as("omitted when the row has no trace context").isNull();
+    }
+
+    /**
+     * ADR-019 sections 1 and 3: every event of the screening aggregate goes to the one aggregate topic
+     * evt.cmp.compliance.v1, keyed by the aggregate id, and the record headers eventType, eventId and
+     * correlationId repeat the envelope so consumers can route (and skip types they do not handle)
+     * without parsing the value.
+     */
+    @Test
+    void anEventFromTheFactoryGoesToTheAggregateTopicWithTheEnvelopeHeaders() throws Exception {
+        com.bank.compliance.domain.ComplianceResult result = com.bank.compliance.domain.ComplianceResultFixtures.result(
+            "PAY-HDR-1", "C-1", com.bank.compliance.domain.ComplianceDecision.PASS, List.of());
+        com.fasterxml.jackson.databind.ObjectMapper json = new com.fasterxml.jackson.databind.ObjectMapper();
+        OutboxEventJpaEntity row = new ComplianceEventEnvelopeFactory(json)
+            .toOutboxRow(result.screenedEvent(), "corr-hdr", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
+        com.fasterxml.jackson.databind.JsonNode envelope = json.readTree(row.getPayload());
+
+        ProducerRecord<String, String> record = OutboxRelay.toRecord(row);
+
+        assertThat(record.topic()).isEqualTo("evt.cmp.compliance.v1");
+        assertThat(record.key()).isEqualTo(envelope.get("aggregateId").asText());
+        assertThat(header(record, "eventType")).isEqualTo(envelope.get("eventType").asText())
+            .isEqualTo("Compliance.ComplianceScreening.Screened.v1");
+        assertThat(header(record, "eventId")).isEqualTo(envelope.get("eventId").asText());
+        assertThat(header(record, "correlationId")).isEqualTo(envelope.get("correlationId").asText())
+            .isEqualTo("corr-hdr");
+        assertThat(header(record, "traceparent")).isEqualTo("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
+    }
+
+    /** The relay sends every required header of common/event-envelope.yaml#/EventHeaders and nothing it does not declare. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void recordHeadersAreTheContractEventHeaders() throws Exception {
+        java.util.Map<String, Object> envelope = null;
+        for (String prefix : List.of("", "../", "../../")) {
+            java.nio.file.Path candidate = java.nio.file.Path.of(prefix + "api/asyncapi/common/event-envelope.yaml");
+            if (java.nio.file.Files.exists(candidate)) {
+                envelope = new org.yaml.snakeyaml.Yaml().load(java.nio.file.Files.readString(candidate));
+            }
+        }
+        assertThat(envelope).as("api/asyncapi/common/event-envelope.yaml").isNotNull();
+        java.util.Map<String, Object> eventHeaders = (java.util.Map<String, Object>) envelope.get("EventHeaders");
+        List<String> required = (List<String>) eventHeaders.get("required");
+        java.util.Set<String> declared = ((java.util.Map<String, Object>) eventHeaders.get("properties")).keySet();
+
+        ProducerRecord<String, String> record = OutboxRelay.toRecord(
+            row("CMP-11", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"));
+        List<String> sent = new java.util.ArrayList<>();
+        record.headers().forEach(h -> sent.add(h.key()));
+
+        assertThat(required).containsExactlyInAnyOrder("eventType", "eventId", "correlationId");
+        assertThat(sent).containsAll(required).doesNotHaveDuplicates();
+        assertThat(declared).containsAll(sent);
     }
 
     @Test
@@ -463,7 +517,7 @@ class OutboxRelayTest {
 
     private static OutboxEventJpaEntity row(String aggregateId, String traceparent) {
         return new OutboxEventJpaEntity(UUID.randomUUID(), "ComplianceScreening", aggregateId, 0L,
-            "Compliance.ComplianceScreening.Screened.v1", "evt.cmp.compliance.screened.v1", "{}", "corr-9", traceparent, NOW);
+            "Compliance.ComplianceScreening.Screened.v1", "evt.cmp.compliance.v1", "{}", "corr-9", traceparent, NOW);
     }
 
     /** A clock the test moves forward. */

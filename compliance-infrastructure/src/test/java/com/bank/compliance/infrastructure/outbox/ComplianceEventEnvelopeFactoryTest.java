@@ -41,7 +41,7 @@ class ComplianceEventEnvelopeFactoryTest {
         OutboxEventJpaEntity row = factory.toOutboxRow(event, "corr-1");
 
         assertThat(row.getEventId()).isEqualTo(event.eventId());
-        assertThat(row.getTopic()).isEqualTo("evt.cmp.compliance.screened.v1");
+        assertThat(row.getTopic()).isEqualTo("evt.cmp.compliance.v1");
         assertThat(row.getEventType()).isEqualTo("Compliance.ComplianceScreening.Screened.v1");
         assertThat(row.getAggregateType()).isEqualTo("ComplianceScreening");
         assertThat(row.getAggregateId()).isEqualTo(SCREENING_ID);

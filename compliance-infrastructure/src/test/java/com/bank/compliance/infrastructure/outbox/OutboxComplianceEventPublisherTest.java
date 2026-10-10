@@ -38,7 +38,7 @@ class OutboxComplianceEventPublisherTest {
 
         ArgumentCaptor<OutboxEventJpaEntity> row = ArgumentCaptor.forClass(OutboxEventJpaEntity.class);
         verify(outbox).save(row.capture());
-        assertThat(row.getValue().getTopic()).isEqualTo("evt.cmp.compliance.screened.v1");
+        assertThat(row.getValue().getTopic()).isEqualTo("evt.cmp.compliance.v1");
         assertThat(row.getValue().getAggregateId()).isEqualTo(result.getId().getValue());
         assertThat(row.getValue().getCorrelationId()).isEqualTo("corr-req");
     }
