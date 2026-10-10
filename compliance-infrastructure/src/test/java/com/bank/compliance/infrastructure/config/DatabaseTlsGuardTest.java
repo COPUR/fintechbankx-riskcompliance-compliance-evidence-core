@@ -79,6 +79,28 @@ class DatabaseTlsGuardTest {
         assertThatCode(() -> new DatabaseTlsGuard(environment).verify()).doesNotThrowAnyException();
     }
 
+    /** Flyway connects with spring.flyway.url instead of the datasource URL: a verified URL elsewhere migrates another database. */
+    @Test
+    void refusesAFlywayUrlThatDiffersFromTheDatasourceUrlEvenWhenVerified() {
+        String elsewhere = "jdbc:postgresql://other.example:5432/db_other?sslmode=verify-full&sslrootcert=" + BUNDLE;
+        MockEnvironment environment = environment(VALID).withProperty("spring.flyway.url", elsewhere);
+
+        assertThatThrownBy(() -> new DatabaseTlsGuard(environment).verify())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("spring.flyway.url must equal spring.datasource.url")
+                .message().doesNotContain("other.example");
+    }
+
+    @Test
+    void refusesToStartTheContextWhenTheFlywayUrlPointsElsewhere() {
+        contextRunner
+                .withPropertyValues("DB_SSL_ROOT_CERT=" + BUNDLE, "spring.datasource.url=" + VALID,
+                        "spring.flyway.url=jdbc:postgresql://other.example:5432/db_other"
+                                + "?sslmode=verify-full&sslrootcert=" + BUNDLE)
+                .run(context -> assertThat(context).hasFailed()
+                        .getFailure().hasMessageContaining("spring.flyway.url must equal spring.datasource.url"));
+    }
+
     @Test
     void refusesAHikariJdbcUrlThatWouldReplaceTheDatasourceUrl() {
         MockEnvironment environment = environment(VALID)
