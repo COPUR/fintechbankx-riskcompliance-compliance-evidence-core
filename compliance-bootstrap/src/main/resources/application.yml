@@ -1,0 +1,204 @@
+# svc-cmp-evidence runtime configuration.
+# Every environment-specific value comes from the environment (Helm values,
+# Kubernetes Secret synced from AWS Secrets Manager); nothing secret is here.
+spring:
+  application:
+    name: compliance-evidence-service
+  threads:
+    virtual:
+      enabled: true
+  lifecycle:
+    timeout-per-shutdown-phase: 25s
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/db_cmp_evidence_local}
+    username: ${DB_USERNAME:compliance_evidence_app}
+    # The credential is bound from SPRING_DATASOURCE_PASSWORD (Kubernetes Secret
+    # synced from AWS Secrets Manager); it is never written in this file.
+    hikari:
+      schema: sc_cmp_evidence
+      maximum-pool-size: ${DB_POOL_MAX:10}
+      minimum-idle: ${DB_POOL_MIN_IDLE:2}
+      connection-timeout: 3000
+      max-lifetime: 1200000
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: sc_cmp_evidence
+        jdbc:
+          time_zone: UTC
+          batch_size: 50
+  flyway:
+    # The service pods never migrate (compliance.database.flyway below). The
+    # chart's pre-install/pre-upgrade Job runs this image with the argument
+    # "migrate" (DatabaseMigration, profile db-migrate) and the schema owner's
+    # DB_MIGRATION_* from the db-migration secret; the pods have only the runtime
+    # role, which V7 grants SELECT, INSERT on the evidence table and V12 SELECT
+    # on the schema history. Without DB_MIGRATION_* (the pods, local runs) Flyway
+    # uses the app credentials. The history table keeps Flyway's default name
+    # (flyway_schema_history), which V12 grants.
+    user: ${DB_MIGRATION_USERNAME:${spring.datasource.username}}
+    password: ${DB_MIGRATION_PASSWORD:${spring.datasource.password:}}
+    placeholders:
+      runtime_role: ${spring.datasource.username}
+    schemas: sc_cmp_evidence
+    default-schema: sc_cmp_evidence
+    create-schemas: true
+    locations: classpath:db/migration
+  # Outbox relay producer, per the platform Kafka client guide
+  # (fintechbankx-platform-event-streaming-kafka docs/guides/SERVICE_CLIENT_CONFIGURATION.md).
+  # Runtime-neutral here: locally PLAINTEXT; authentication comes from the
+  # "kafka-msk" (AWS, IAM via IRSA) or "kafka-strimzi" (mTLS) profile below.
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    security:
+      protocol: ${KAFKA_SECURITY_PROTOCOL:PLAINTEXT}
+    admin:
+      # Topics exist only through the platform catalog; services never create them.
+      auto-create: false
+    producer:
+      client-id: svc-cmp-evidence
+      acks: all
+      compression-type: lz4
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 5
+        # Kafka requires delivery.timeout.ms >= linger.ms + request.timeout.ms,
+        # otherwise the producer cannot be constructed.
+        delivery.timeout.ms: 30000
+        request.timeout.ms: 20000
+        linger.ms: 5
+        # send() waits at most this long for metadata or buffer space (Kafka's default
+        # is 60 s); the relay holds a DB connection and its advisory lock meanwhile.
+        max.block.ms: 10000
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${OIDC_ISSUER_URI:http://localhost:8180/realms/fintechbankx}
+          jwk-set-uri: ${OIDC_JWK_SET_URI:http://localhost:8180/realms/fintechbankx/protocol/openid-connect/certs}
+
+server:
+  port: 8080
+  shutdown: graceful
+  forward-headers-strategy: framework
+
+management:
+  server:
+    port: 8081
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db
+        liveness:
+          include: livenessState
+  metrics:
+    # Common tags on every meter. Platform alert rules select outbox meters by app and squad;
+    # the chart sets METRICS_APP to its service account name and METRICS_SQUAD to compliance.
+    tags:
+      service: svc-cmp-evidence
+      app: ${METRICS_APP:compliance-evidence-service}
+      squad: ${METRICS_SQUAD:compliance}
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+  observations:
+    key-values:
+      service: svc-cmp-evidence
+
+fintechbankx:
+  security:
+    # Tokens must carry this value in "aud" (Keycloak audience mapper on each calling client).
+    audience: ${OIDC_AUDIENCE:svc-cmp-evidence}
+    # Client ids (token "azp") allowed to screen and read results with the SERVICE role.
+    service-callers: ${SERVICE_CALLERS:svc-pay-initiation-settlement}
+
+compliance:
+  outbox:
+    retention: P7D
+    relay:
+      # Off unless the environment turns it on (the chart sets it per environment).
+      enabled: ${OUTBOX_RELAY_ENABLED:false}
+      interval: PT1S
+      batch-size: 100
+      # Longer than delivery.timeout.ms, so the relay never abandons a send Kafka
+      # is still retrying (which would publish the event twice).
+      send-timeout: PT35S
+      # ADR-021 decision 4: a payload error (RecordTooLarge, Serialization, InvalidTopic)
+      # parks its row at once. Any other failure stops the batch without marking the
+      # row, is retried with the backoff below and alerts on the oldest-pending age;
+      # it is never parked. max-attempts never parks a row either: from this many
+      # consecutive stopped runs on, each failure is logged at ERROR instead of WARN.
+      max-attempts: ${OUTBOX_RELAY_MAX_ATTEMPTS:10}
+      # After a run that stopped on a failure, wait this long before the next one,
+      # doubling per stopped run up to backoff-max; a run that does not stop resets it
+      # (ADR-021 decision 4: retry with backoff and alert).
+      backoff-initial: ${OUTBOX_RELAY_BACKOFF_INITIAL:PT1S}
+      backoff-max: ${OUTBOX_RELAY_BACKOFF_MAX:PT5M}
+
+  database:
+    # validate: at startup Flyway checks the schema history as the runtime role
+    # and the service refuses to start while a migration is pending or an
+    # applied one differs (the Deployment rollout then stalls, old pods keep
+    # serving). migrate: only the migration Job (profile db-migrate) and tests.
+    flyway: validate
+
+logging:
+  pattern:
+    level: "%5p [${spring.application.name},%X{traceId:-},%X{spanId:-},%X{correlationId:-}]"
+
+---
+# Migration Job (chart templates/migration-job.yaml, image args "migrate"):
+# DatabaseMigration starts only the datasource and Flyway with this profile,
+# migrates as the schema owner and exits.
+spring:
+  config:
+    activate:
+      on-profile: db-migrate
+compliance:
+  database:
+    flyway: migrate
+
+---
+# Amazon MSK with IAM authentication (SPRING_PROFILES_ACTIVE=kafka-msk, the
+# Helm default). Credentials come from the pod's IRSA role; nothing secret here.
+spring:
+  config:
+    activate:
+      on-profile: kafka-msk
+  kafka:
+    security:
+      protocol: SASL_SSL
+    properties:
+      sasl.mechanism: AWS_MSK_IAM
+      sasl.jaas.config: "software.amazon.msk.auth.iam.IAMLoginModule required;"
+      sasl.client.callback.handler.class: software.amazon.msk.auth.iam.IAMClientCallbackHandler
+
+---
+# In-cluster Strimzi with TLS client certificates (SPRING_PROFILES_ACTIVE=kafka-strimzi).
+# PEM content comes from Secret kafka-client-tls (Helm kafkaClientTls.enabled),
+# copied from the KafkaUser secret svc-cmp-evidence and the cluster CA.
+spring:
+  config:
+    activate:
+      on-profile: kafka-strimzi
+  kafka:
+    security:
+      protocol: SSL
+    ssl:
+      key-store-type: PEM
+      trust-store-type: PEM
+      key-store-certificate-chain: ${KAFKA_TLS_CERT}
+      key-store-key: ${KAFKA_TLS_KEY}
+      trust-store-certificates: ${KAFKA_TLS_CA}

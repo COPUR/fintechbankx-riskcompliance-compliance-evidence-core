@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  {{- range $key := list "DB_URL" "KAFKA_BOOTSTRAP_SERVERS" "OIDC_ISSUER_URI" "OIDC_JWK_SET_URI" "OIDC_AUDIENCE" }}
+  {{- $_ := required (printf "config.%s is required" $key) (get $.Values.config $key) }}
+  {{- end }}
+  name: {{ include "compliance.name" . }}
+  labels:
+    {{- include "compliance.labels" . | nindent 4 }}
+data:
+  {{- range $key, $value := .Values.config }}
+  {{ $key | quote }}: {{ $value | quote }}
+  {{- end }}
+  # The only Spring profile: kafka.runtime msk -> kafka-msk (Amazon MSK IAM over SASL_SSL), strimzi ->
+  # kafka-strimzi (Strimzi mutual TLS over SSL). No config key may set a profile (compliance.guard).
+  {{- with include "fbx.kafkaProfile" (dict "Values" (dict "kafka" (.Values.kafka | default dict))) }}
+  SPRING_PROFILES_ACTIVE: {{ . | quote }}
+  {{- end }}
+  # Common metric tags (application.yml management.metrics.tags): app = service account, squad = owner.
+  METRICS_APP: {{ .Values.serviceAccount.name | quote }}
+  METRICS_SQUAD: {{ .Values.metrics.squad | quote }}

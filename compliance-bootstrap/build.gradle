@@ -1,0 +1,58 @@
+// =================================================================
+// COMPLIANCE BOOTSTRAP MODULE
+// =================================================================
+// Runnable Spring Boot service (svc-cmp-evidence). Wires the domain,
+// application and infrastructure modules; holds runtime configuration only.
+// =================================================================
+
+apply plugin: 'org.springframework.boot'
+// Execution data feeds compliance-infrastructure's coverage gate.
+apply plugin: 'jacoco'
+jacoco {
+    toolVersion = '0.8.14'
+}
+
+description = 'Compliance Bootstrap - deployable svc-cmp-evidence service'
+
+dependencies {
+    implementation project(':compliance-infrastructure')
+    implementation project(':compliance-application')
+    implementation project(':compliance-domain')
+
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+    implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
+    // Outbox relay producer; KafkaTemplate is auto-configured from spring.kafka.*
+    implementation 'org.springframework.kafka:spring-kafka'
+    // Amazon MSK IAM authentication (SASL_SSL / AWS_MSK_IAM), activated by the "msk" profile
+    runtimeOnly 'software.amazon.msk:aws-msk-iam-auth:2.2.0'
+    runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
+    runtimeOnly 'org.postgresql:postgresql'
+    // FlywayStartupConfiguration: the service validates, the migration Job (DatabaseMigration) migrates.
+    implementation 'org.flywaydb:flyway-core'
+    runtimeOnly 'org.flywaydb:flyway-database-postgresql'
+
+    testImplementation testFixtures(project(':compliance-domain'))
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.security:spring-security-test'
+    testImplementation 'org.testcontainers:junit-jupiter'
+    testImplementation 'org.testcontainers:postgresql'
+    testImplementation libs.archunit.junit5
+    // OutboxAggregateTopicMigrationIT drives Flyway to a target version on a scratch schema.
+    testImplementation 'org.flywaydb:flyway-core'
+}
+
+springBoot {
+    mainClass = 'com.bank.compliance.ComplianceEvidenceApplication'
+    buildInfo()
+}
+
+bootJar {
+    archiveFileName = 'compliance-evidence-service.jar'
+}
+
+jar {
+    enabled = false
+}

@@ -1,1 +1,14 @@
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        // The Spring Boot plugin's own dependencies are only on Maven Central.
+        mavenCentral()
+    }
+}
+
 rootProject.name = 'fintechbankx-compliance-evidence-service'
+
+include 'compliance-domain'
+include 'compliance-application'
+include 'compliance-infrastructure'
+include 'compliance-bootstrap'

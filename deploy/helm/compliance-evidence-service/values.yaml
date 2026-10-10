@@ -1,0 +1,148 @@
+# Defaults are production-shaped (multi-replica, spread across zones).
+# Override per environment with values-<env>.yaml.
+
+image:
+  repository: ""   # e.g. <account>.dkr.ecr.<region>.amazonaws.com/fintechbankx/compliance-evidence-service
+  tag: ""          # immutable tag (git SHA); never "latest"
+  pullPolicy: IfNotPresent
+
+replicaCount: 3
+
+serviceAccount:
+  name: compliance-evidence-service
+  # IAM role from deploy/terraform output workload_role_arn (IRSA).
+  roleArn: ""
+
+podLabels:
+  app.kubernetes.io/part-of: fintechbankx-compliance
+  fintechbankx.io/service-id: svc-cmp-evidence
+  sidecar.istio.io/inject: "true"
+
+service:
+  port: 8080
+  managementPort: 8081
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 768Mi
+  limits:
+    memory: 1Gi
+
+# CPU only: the JVM keeps committed heap, so a memory target would pin the
+# deployment at maxReplicas and block scale-down.
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 12
+  targetCPUUtilizationPercentage: 65
+
+podDisruptionBudget:
+  minAvailable: 2
+
+# Non-secret runtime settings, rendered into a ConfigMap.
+config:
+  # Terraform output jdbc_url, e.g. jdbc:postgresql://<aurora-writer-endpoint>:5432/db_cmp_evidence_<env>?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem
+  # Every key and value here passes the platform datasource/TLS guard (fbx.guard, vendored from
+  # cicd-templates a4f0072 in templates/_fbx_helpers.tpl) and the chart's own rules (compliance.guard).
+  # DB_URL: jdbc:postgresql: with sslmode=verify-full and sslrootcert=<databaseCa.mountPath>/<key> exactly
+  # once (lower-case names), no sslfactory, sslfactoryarg, sslhostnameverifier, sslpasswordcallback or
+  # service, no '${' or '$('. No key may name a datasource, Flyway, Liquibase, R2DBC, spring.config.*,
+  # spring.profiles.* (kafka.runtime below sets the profile), SSL bundle, fintechbankx.tls.*, JVM option,
+  # LOGGING_LEVEL_* or DB_SSL_ROOT_CERT setting in any spelling; keys are ConfigMap keys
+  # ([-._a-zA-Z0-9]+); every value is one string without '$('. See the runbook for the full list.
+  # The Flyway migration Job (schema owner) gets this URL too.
+  DB_URL: ""
+  # Runtime role: the service connects as it; the migration Job grants it (V7, V12).
+  DB_USERNAME: compliance_evidence_app
+  DB_POOL_MAX: "10"
+  # Amazon MSK, IAM auth through the IRSA role (deploy/terraform msk_cluster_arn); the profile comes from
+  # kafka.runtime below. The guard requires SASL_SSL with kafka.runtime msk and SSL with strimzi.
+  KAFKA_BOOTSTRAP_SERVERS: ""     # MSK bootstrap_brokers_sasl_iam, e.g. b-1.<cluster>.kafka.<region>.amazonaws.com:9098
+  KAFKA_SECURITY_PROTOCOL: SASL_SSL
+  OIDC_ISSUER_URI: ""
+  OIDC_JWK_SET_URI: ""
+  OIDC_AUDIENCE: svc-cmp-evidence   # tokens must carry the service id in aud (platform contract)
+  # Client ids (token azp) that may screen and read with the SERVICE role.
+  SERVICE_CALLERS: svc-pay-initiation-settlement
+  # Transactional outbox relay to the aggregate topic evt.cmp.compliance.v1 (ADR-019). Every replica
+  # runs it; a Postgres advisory lock lets one publish at a time.
+  # Off until the mesh contract lists msk for compliance-evidence-service
+  # (allow-egress-msk generated for namespace compliance) and the topic exists;
+  # then override with --set-string config.OUTBOX_RELAY_ENABLED=true (runbook step 5).
+  # Screenings are stored and their events wait in the outbox meanwhile.
+  OUTBOX_RELAY_ENABLED: "false"
+
+# The only Spring profile the chart renders (SPRING_PROFILES_ACTIVE in the ConfigMap):
+#   msk     -> kafka-msk: Amazon MSK IAM over SASL_SSL (application.yml), the default;
+#   strimzi -> kafka-strimzi: in-cluster Strimzi mutual TLS over SSL; needs kafkaClientTls.enabled and
+#              config.KAFKA_SECURITY_PROTOCOL=SSL.
+# No config key may set a profile.
+kafka:
+  runtime: msk
+
+# Amazon RDS CA bundle for Aurora TLS with certificate and host-name verification
+# (cicd-templates 4f0f266). ConfigMap rds-ca-bundle (key global-bundle.pem) is
+# published in each service namespace by the mesh platform repo's trust-manager
+# Bundle. Mounted read-only at mountPath and exported as DB_SSL_ROOT_CERT; the
+# volume is not optional, so a missing bundle keeps the pod from starting
+# instead of connecting unverified. There is no switch to turn it off: this
+# service always has a PostgreSQL database.
+databaseCa:
+  configMapName: rds-ca-bundle
+  key: global-bundle.pem
+  mountPath: /etc/fintechbankx/rds-ca
+
+# Database credential, synced from AWS Secrets Manager by External Secrets Operator.
+externalSecret:
+  enabled: true
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: aws-secrets-manager
+  # Secrets Manager secret from deploy/terraform output app_db_secret_name.
+  remoteSecretName: ""
+  # Required. Secrets Manager secret <env>/compliance-evidence-service/db-migration
+  # (Terraform output migration_db_secret_name): the schema owner's
+  # {"username","password"}, read only by the migration Job below. The service
+  # pods never mount it.
+  migrationSecretName: ""
+  refreshInterval: 1h
+
+topologySpread:
+  maxSkew: 1
+
+# Flyway migration Job (templates/migration-job.yaml): Helm pre-install and
+# pre-upgrade hook running this image with the argument "migrate" as the schema
+# owner, before any pod of the release starts or is replaced. A failed Job fails
+# the install or upgrade; give helm --timeout more than activeDeadlineSeconds
+# (runbook, "Database migrations"). The pods label themselves
+# app.kubernetes.io/name=<serviceAccount.name>, app.kubernetes.io/component=db-migration.
+migrationJob:
+  # One retry: each migration is transactional in PostgreSQL, so a retry after a
+  # dropped connection starts from the last applied version.
+  backoffLimit: 1
+  activeDeadlineSeconds: 600
+  # Finished Jobs (and their logs) are removed after a day, or replaced by the
+  # next install or upgrade.
+  ttlSecondsAfterFinished: 86400
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 768Mi
+
+# No NetworkPolicy in this chart: ingress (payments, istio-ingress, observability)
+# is owned by the service-mesh repository (mesh #11, 128e19d).
+
+# Strimzi only (kafka.runtime strimzi, which requires it): maps the client
+# certificate, key and cluster CA from this Secret (keys user.crt, user.key,
+# ca.crt) to KAFKA_TLS_CERT/KEY/CA, and keeps the sidecar off Kafka's own mTLS.
+kafkaClientTls:
+  enabled: false
+  secretName: kafka-client-tls
+  brokerPort: 9093
+
+# Common metric tags. app is the serviceAccount name above; squad owns the alerts.
+metrics:
+  squad: compliance

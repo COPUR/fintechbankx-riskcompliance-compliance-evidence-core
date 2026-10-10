@@ -11,7 +11,7 @@ class ComplianceResultTest {
 
     @Test
     void shouldCreateResultAndExposeFlags() {
-        ComplianceResult result = ComplianceResult.create("TX-1", "C-1", ComplianceDecision.PASS, List.of("COMPLIANT"));
+        ComplianceResult result = ComplianceResultFixtures.result("TX-1", "C-1", ComplianceDecision.PASS, List.of("COMPLIANT"));
 
         assertThat(result.getId().getValue()).startsWith("CMP-");
         assertThat(result.getTransactionId()).isEqualTo("TX-1");
@@ -20,11 +20,11 @@ class ComplianceResultTest {
 
     @Test
     void shouldRejectInvalidIdentifiers() {
-        assertThatThrownBy(() -> ComplianceResult.create("", "C-1", ComplianceDecision.FAIL, List.of("x")))
+        assertThatThrownBy(() -> ComplianceResultFixtures.result("", "C-1", ComplianceDecision.FAIL, List.of("x")))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("transactionId");
 
-        assertThatThrownBy(() -> ComplianceResult.create("TX", "", ComplianceDecision.FAIL, List.of("x")))
+        assertThatThrownBy(() -> ComplianceResultFixtures.result("TX", "", ComplianceDecision.FAIL, List.of("x")))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("customerId");
     }

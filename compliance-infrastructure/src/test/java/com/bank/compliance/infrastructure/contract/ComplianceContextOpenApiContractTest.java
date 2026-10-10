@@ -6,6 +6,8 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
+import org.yaml.snakeyaml.Yaml;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -20,11 +22,37 @@ class ComplianceContextOpenApiContractTest {
         assertThat(spec).contains("\n  /api/v1/compliance/screenings/{transactionId}:\n");
     }
 
+    /**
+     * Platform contract addendum 2026-10-08: DPoP binding applies only to
+     * open-finance TPP clients. This service's callers are internal services
+     * and staff with Bearer tokens, and it does not verify DPoP, so the spec
+     * must not promise a DPoP header is required.
+     */
     @Test
-    void shouldRequireDpopForProtectedOperations() throws IOException {
-        String spec = loadSpec();
-        assertThat(spec).contains("name: DPoP");
-        assertThat(spec).contains("required: true");
+    @SuppressWarnings("unchecked")
+    void dpopHeaderIsDocumentedButNotRequired() throws IOException {
+        Map<String, Object> spec = new Yaml().load(loadSpec());
+        Map<String, Object> parameters = (Map<String, Object>) ((Map<String, Object>) spec.get("components")).get("parameters");
+        Map<String, Object> dpop = (Map<String, Object>) parameters.get("DPoP");
+
+        assertThat(dpop).containsEntry("name", "DPoP").containsEntry("in", "header").containsEntry("required", false);
+        assertThat((String) dpop.get("description")).contains("open-finance TPP").contains("not verified");
+        assertThat((Map<String, Object>) parameters.get("Authorization")).containsEntry("required", true);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void sanctionsAndPepFlagsAreRequiredWithoutADefault() throws IOException {
+        Map<String, Object> spec = new Yaml().load(loadSpec());
+        Map<String, Object> schemas = (Map<String, Object>) ((Map<String, Object>) spec.get("components")).get("schemas");
+        Map<String, Object> request = (Map<String, Object>) schemas.get("ComplianceScreeningRequest");
+        Map<String, Object> properties = (Map<String, Object>) request.get("properties");
+
+        assertThat((List<String>) request.get("required")).contains("currency", "sanctionsHit", "kycVerified", "pep");
+        assertThat((Map<String, Object>) properties.get("currency")).doesNotContainKey("default");
+        assertThat((Map<String, Object>) properties.get("sanctionsHit")).doesNotContainKey("default");
+        assertThat((Map<String, Object>) properties.get("pep")).doesNotContainKey("default");
+        assertThat((Map<String, Object>) properties.get("kycVerified")).doesNotContainKey("default");
     }
 
     private static String loadSpec() throws IOException {
