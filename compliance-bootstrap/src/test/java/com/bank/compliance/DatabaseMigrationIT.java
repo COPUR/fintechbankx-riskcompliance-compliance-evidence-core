@@ -41,6 +41,8 @@ class DatabaseMigrationIT {
     /** A scratch runtime role granted the schema owner: what a wrong DBA bootstrap would produce. */
     private static final String OWNER_MEMBER_ROLE = "compliance_owner_member_it";
     private static final String OWNER_MEMBER_PASSWORD = "compliance_owner_member_it";
+    /** What SPRING_MAIN_LAZY_INITIALIZATION=true in a pod's environment would do: every ordinary singleton lazy. */
+    private static final String[] LAZY_INITIALIZATION = {"--spring.main.lazy-initialization=true"};
 
     private static JdbcTemplate owner;
 
@@ -65,6 +67,8 @@ class DatabaseMigrationIT {
             assertThat(job.getBeanNamesForType(EntityManagerFactory.class)).as("no JPA").isEmpty();
             assertThat(job.getBeanNamesForType(KafkaTemplate.class)).as("no Kafka").isEmpty();
             assertThat(job.getBeanNamesForType(OutboxRelay.class)).as("no outbox relay").isEmpty();
+            assertThat(job.getBeanNamesForType(RuntimeRoleGuard.class))
+                .as("no runtime role guard: the Job connects as the schema owner on purpose").isEmpty();
         }
 
         assertThat(appliedVersions(JOB_SCHEMA)).isEqualTo(resolvedMigrations());
@@ -145,6 +149,20 @@ class DatabaseMigrationIT {
      */
     @Test
     void theServiceRefusesToStartAsARuntimeRoleThatIsAMemberOfTheSchemaOwner() {
+        theServiceRefusesToStartAsARuntimeRoleThatIsAMemberOfTheSchemaOwner(new String[0]);
+    }
+
+    /**
+     * spring.main.lazy-initialization=true (SPRING_MAIN_LAZY_INITIALIZATION, a config key the chart refuses) makes
+     * every ordinary singleton lazy: a guard that verified while its bean was created, and that nothing injects,
+     * would never run in the pod. The guard is eager and runs once every singleton exists, so the refusal is the same.
+     */
+    @Test
+    void theServiceRefusesToStartAsARuntimeRoleThatIsAMemberOfTheSchemaOwnerUnderLazyInitializationToo() {
+        theServiceRefusesToStartAsARuntimeRoleThatIsAMemberOfTheSchemaOwner(LAZY_INITIALIZATION);
+    }
+
+    private void theServiceRefusesToStartAsARuntimeRoleThatIsAMemberOfTheSchemaOwner(String... extra) {
         assertThat(DatabaseMigration.run(job(SERVICE_SCHEMA))).isZero();
         String tableOwner = owner.queryForObject(
             "select tableowner from pg_tables where schemaname = ? and tablename = 'compliance_screening'",
@@ -153,7 +171,7 @@ class DatabaseMigrationIT {
         owner.execute("create role " + OWNER_MEMBER_ROLE + " login password '" + OWNER_MEMBER_PASSWORD
             + "' in role " + tableOwner);
         try {
-            assertThatThrownBy(() -> serviceAs(OWNER_MEMBER_ROLE, OWNER_MEMBER_PASSWORD))
+            assertThatThrownBy(() -> serviceAs(OWNER_MEMBER_ROLE, OWNER_MEMBER_PASSWORD, extra))
                 .rootCause().isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("DB_USERNAME (the runtime role the service connects as) must be least privilege")
                 .hasMessageContaining("member of the owner")
@@ -168,9 +186,22 @@ class DatabaseMigrationIT {
 
     @Test
     void theServiceRefusesToStartWhileAMigrationIsPending() {
+        theServiceRefusesToStartWhileAMigrationIsPending(new String[0]);
+    }
+
+    /**
+     * Under lazy initialization nothing would touch Flyway's initializer before the first request, so the runtime
+     * role guard, which runs after it, depends on it: the pending migration is still detected at startup.
+     */
+    @Test
+    void theServiceRefusesToStartWhileAMigrationIsPendingUnderLazyInitializationToo() {
+        theServiceRefusesToStartWhileAMigrationIsPending(LAZY_INITIALIZATION);
+    }
+
+    private void theServiceRefusesToStartWhileAMigrationIsPending(String... extra) {
         assertThat(DatabaseMigration.run(job(SERVICE_SCHEMA))).isZero();
 
-        assertThatThrownBy(() -> service("--spring.flyway.locations=classpath:db/migration,classpath:db/pending-it"))
+        assertThatThrownBy(() -> service(with(extra, "--spring.flyway.locations=classpath:db/migration,classpath:db/pending-it")))
             .rootCause().isInstanceOf(FlywayValidateException.class)
             .hasMessageContaining("Detected resolved migration not applied to database: 9999");
         assertThat(owner.queryForObject(

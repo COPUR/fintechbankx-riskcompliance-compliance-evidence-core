@@ -3,13 +3,19 @@ package com.bank.compliance.infrastructure.config;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.boot.Banner;
+import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
 import org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration;
 import org.springframework.boot.autoconfigure.kafka.KafkaProperties;
 import org.springframework.boot.autoconfigure.ssl.SslAutoConfiguration;
+import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.boot.ssl.DefaultSslBundleRegistry;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Import;
 import org.springframework.mock.env.MockEnvironment;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -184,6 +190,30 @@ class KafkaTlsGuardTest {
         contextRunner
                 .withPropertyValues(property, PROTOCOL + "=PLAINTEXT")
                 .run(context -> assertThat(context).hasFailed().getFailure().hasMessageContaining(REFUSED));
+    }
+
+    /**
+     * spring.main.lazy-initialization=true (SPRING_MAIN_LAZY_INITIALIZATION, a config key the chart refuses) makes
+     * every ordinary singleton lazy, so a guard that verified while its bean was created would never run in a pod
+     * that nothing injects it into. The guard is a BeanFactoryPostProcessor, which lazy initialization cannot skip:
+     * the refusal is the same, through SpringApplication, which is what binds spring.main.*.
+     */
+    @Test
+    void refusesToStartUnderLazyInitializationToo() {
+        assertThatThrownBy(() -> new SpringApplicationBuilder(LazyShape.class)
+                .web(WebApplicationType.NONE)
+                .bannerMode(Banner.Mode.OFF)
+                .properties("spring.main.lazy-initialization=true", PROTOCOL + "=PLAINTEXT")
+                .run())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(REFUSED)
+                .hasMessageContaining("PLAINTEXT");
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    @ImportAutoConfiguration({SslAutoConfiguration.class, KafkaAutoConfiguration.class})
+    @Import(KafkaTlsConfiguration.class)
+    static class LazyShape {
     }
 
     private static MockEnvironment environment(String protocol) {

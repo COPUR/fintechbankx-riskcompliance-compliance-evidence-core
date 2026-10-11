@@ -4,6 +4,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -113,6 +114,28 @@ class RuntimeRoleGuardIT {
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining(REFUSED)
             .hasMessageContaining("it has " + privilege + " on compliance_screening");
+    }
+
+    /**
+     * has_table_privilege sees table-level grants only: GRANT UPDATE (decision) ON compliance_screening lets the
+     * role rewrite a decision and would pass it. The guard asks has_any_column_privilege as well, for UPDATE and
+     * for REFERENCES (the other two column privileges, SELECT and INSERT, are V7's own grants).
+     */
+    @ParameterizedTest
+    @CsvSource({
+        "'update (decision)', it has UPDATE on a column of compliance_screening",
+        "'references', it has REFERENCES on compliance_screening",
+        "'references (screening_id)', it has REFERENCES on compliance_screening",
+    })
+    void refusesAColumnLevelPrivilegeOnTheEvidence(String grant, String finding) {
+        scratchRoleLikeV7();
+        owner.execute("grant " + grant + " on " + EVIDENCE + " to " + SCRATCH);
+
+        assertThatThrownBy(() -> scratchGuard().verify())
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining(REFUSED)
+            .hasMessageContaining(finding)
+            .hasMessageNotContaining(SCRATCH);
     }
 
     /** V7's grants alone pass: the scratch shape is least privilege until a test adds one thing. */
