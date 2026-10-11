@@ -48,26 +48,20 @@ jobs:
           tar -xzf "$tmpdir/kubeconform.tar.gz" -C "$tmpdir" kubeconform
           sudo install "$tmpdir/kubeconform" /usr/local/bin/kubeconform
           rm -rf "$tmpdir"
-      - name: Vendored datasource/TLS guard (cicd-templates a4f0072)
+      # verify-vendored-guard.sh needs node 18 or later.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Vendored platform guard (cicd-templates 6b6c317)
         shell: bash
         run: |
-          set -euo pipefail
-          chart=deploy/helm/compliance-evidence-service
-          file="$chart/templates/_fbx_helpers.tpl"
-          # fintechbankx-platform-delivery-iac-cicd-templates charts/fintechbankx-service/templates/_helpers.tpl at
-          # a4f0072, copied unchanged under a header (the first Go-template comment, up to its first "*/}}" line).
-          want=1fd684735383301baf3052c5d8978dd86edee1ac1c66ebfb944a8a6a166f4c92
-          head -1 "$file" | grep -qxF '{{/*'
-          sed -n '1,/^\*\/}}$/p' "$file" | grep -q 'commit a4f0072'
-          got="$(sed '1,/^\*\/}}$/d' "$file" | sha256sum | cut -d' ' -f1)"
-          if [ "$got" != "$want" ]; then
-            echo "$file is not cicd-templates a4f0072 unchanged (sha256 $got, want $want); re-copy it" >&2; exit 1
-          fi
-          # Both workloads call the guard, through the chart's adapter, before they render anything.
-          for t in deployment.yaml migration-job.yaml; do
-            head -1 "$chart/templates/$t" | grep -qxF '{{- include "compliance.guard" . -}}'
-          done
-          grep -qF 'include "fbx.guard" (dict "Values"' "$chart/templates/_helpers.tpl"
+          # Source: COPUR/fintechbankx-platform-delivery-iac-cicd-templates
+          #   charts/fintechbankx-service/templates/_helpers.tpl at commit 6b6c317, copied whole and unchanged,
+          #   without a header, to templates/_fbx_helpers.tpl; scripts/ci/verify-vendored-guard.sh from the same commit.
+          # Checks (a) the one file defining fbx.guard has this sha256, (b) no other fbx.* define or block anywhere in
+          # the chart, (c) every workload template (Deployment, migration Job) runs fbx.guard, here through the
+          # compliance.guard adapter, before any output. Re-copy both files and re-pin digest and commit together.
+          bash scripts/ci/verify-vendored-guard.sh deploy/helm/compliance-evidence-service 8ba2e4a11ead019c25bf0a01e4fe4bbabb6fef0e1980e5fa828ccb9f5673f8ba
       - name: Lint and render chart
         run: |
           chart=deploy/helm/compliance-evidence-service
@@ -239,7 +233,7 @@ jobs:
             echo "values.yaml gained an env list; map it in the fbx.guard adapter (compliance.guard) first" >&2; exit 1
           fi
           reject_render "config.DB_URL must use sslmode=verify-full (with sslrootcert=$bundle)" --set "config.DB_URL=$base?sslmode=require&applicationName=sslmode=verify-full"
-          # Vendored guard (cicd-templates a4f0072; fbx.guard through compliance.guard). The chart renders the only
+          # Vendored guard (cicd-templates 6b6c317; fbx.guard through compliance.guard). The chart renders the only
           # Spring profile from kafka.runtime (msk -> kafka-msk, strimzi -> kafka-strimzi); no config key sets one.
           helm template ci "$chart" $args --set kafka.runtime=strimzi --set kafkaClientTls.enabled=true \
             --set config.KAFKA_SECURITY_PROTOCOL=SSL | grep -q 'SPRING_PROFILES_ACTIVE: "kafka-strimzi"'
@@ -304,7 +298,7 @@ jobs:
           }
           for spec in image.pullPolicy:10 image.tag:4 serviceAccount.name:6 serviceAccount.roleArn:4 \
               externalSecret.secretStoreRef.name:4 externalSecret.secretStoreRef.kind:4 externalSecret.refreshInterval:2 \
-              databaseCa.configMapName:12 kafkaClientTls.secretName:18 config.OIDC_AUDIENCE:2 podLabels.team:8 \
+              kafkaClientTls.secretName:18 config.OIDC_AUDIENCE:2 podLabels.team:8 \
               replicaCount:2 service.port:14 service.managementPort:14 migrationJob.backoffLimit:2 \
               migrationJob.activeDeadlineSeconds:2 topologySpread.maxSkew:10 podDisruptionBudget.minAvailable:2 \
               autoscaling.minReplicas:2 autoscaling.maxReplicas:2 \
@@ -315,6 +309,165 @@ jobs:
               --set-string "$path=x"$'\n'"${indent}injected: true" 2>&1)" || { echo "render with a newline in $path failed: $out" >&2; exit 1; }
             no_injection "$path" <<<"$out"
           done
+          # cicd-templates 6b6c317, README "Vendoring the guard" step 4: the must_fail cases of
+          # scripts/ci/validate-chart.sh ("DB_URL materialised from the ExternalSecret" to "databaseCa.configMapName
+          # null") and the cases of the helm-unittest suites database_ca_test, kafka_client_tls_names_test,
+          # documentdb_names_test and property_reading_names_test that this chart has a route for: config.*,
+          # kafka.runtime and databaseCa.*. The chart has no extraEnv, extraEnvFrom, javaToolOptions or
+          # values-driven ExternalSecret key (the check above fails if values.yaml gains one), so the cases on
+          # those routes do not apply, nor do the databaseCa.enabled=false ones (the adapter always passes
+          # enabled: true). Each case keeps the platform's --expect pattern (an ERE), so it cannot pass because
+          # the render failed for another reason. These show that every values route reaches fbx.guard.
+          reject_render_re() {
+            local want="$1"; shift
+            local out
+            if out="$(helm template ci "$chart" $args "$@" 2>&1)"; then
+              echo "chart rendered with $*" >&2; exit 1
+            fi
+            if ! grep -qE -- "$want" <<<"$out"; then
+              echo "render with $* failed without /$want/: $out" >&2; exit 1
+            fi
+          }
+          render_ok() {
+            local out
+            out="$(helm template ci "$chart" $args "$@" 2>&1)" || { echo "render with $* failed: $out" >&2; exit 1; }
+          }
+          strimzi="--set-string kafka.runtime=strimzi --set-string config.KAFKA_SECURITY_PROTOCOL=SSL --set kafkaClientTls.enabled=true"
+          db=jdbc:postgresql://db.example.internal:5432/db_cmp_evidence_dev
+          # Database CA mount, pinned while databaseCa.enabled (fbx.validateDatabaseCa): /app is the image WORKDIR
+          # and Spring Boot reads optional:file:./config/, and another ConfigMap or key replaces the trust anchor.
+          reject_render_re 'databaseCa.mountPath must be /etc/fintechbankx/rds-ca \(got "/app/config"\)' \
+            --set-string databaseCa.mountPath=/app/config --set-string "config.DB_URL=$db?sslmode=verify-full&sslrootcert=/app/config/global-bundle.pem"
+          reject_render_re 'databaseCa.mountPath must be /etc/fintechbankx/rds-ca' --set-string databaseCa.mountPath=/etc/fintechbankx/rds-ca/
+          reject_render_re 'databaseCa.key must be global-bundle.pem \(got "other-bundle.pem"\)' \
+            --set-string databaseCa.key=other-bundle.pem --set-string "config.DB_URL=$db?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/other-bundle.pem"
+          reject_render_re 'databaseCa.configMapName must be rds-ca-bundle \(got "any-config"\)' --set-string databaseCa.configMapName=any-config
+          reject_render_re 'databaseCa.configMapName is required while databaseCa.enabled' --set databaseCa.configMapName=null
+          # ...including a newline that would add a key under the volume (the pin refuses every other value).
+          reject_render_re 'databaseCa.configMapName must be rds-ca-bundle' \
+            --set-string "databaseCa.configMapName=rds-ca-bundle"$'\n'"            optional: true"
+          # DB_URL (fbx.validateJdbcUrl).
+          reject_render_re 'config.DB_URL must use sslmode=verify-full' --set-string "config.DB_URL=$db?sslmode=require"
+          reject_render_re 'config.DB_URL must set sslmode exactly once' \
+            --set-string "config.DB_URL=$db?sslmode=verify-full&sslrootcert=$bundle&sslmode=require"
+          reject_render_re 'config.DB_URL must use sslmode=verify-full' \
+            --set-string "config.DB_URL=$db?xsslmode=verify-full&sslmode=disable&sslrootcert=$bundle"
+          reject_render_re "config.DB_URL must set sslrootcert=$bundle exactly once" --set-string "config.DB_URL=$db?sslmode=verify-full&sslrootcert=/tmp/attacker.pem"
+          reject_render_re "config.DB_URL must set sslrootcert=$bundle exactly once" --set-string "config.DB_URL=$db?sslmode=verify-full"
+          reject_render_re 'config.DB_URL must not set sslfactory' \
+            --set-string "config.DB_URL=$db?sslmode=verify-full&sslrootcert=$bundle&sslfactory=org.postgresql.ssl.NonValidatingFactory"
+          reject_render_re 'config.DB_URL must not set sslhostnameverifier' \
+            --set-string "config.DB_URL=$db?sslmode=verify-full&sslrootcert=$bundle&sslhostnameverifier=com.example.AllowAll"
+          reject_render_re 'config.DB_URL must not set sslpasswordcallback' \
+            --set-string "config.DB_URL=$db?sslmode=verify-full&sslrootcert=$bundle&sslpasswordcallback=com.example.Callback"
+          reject_render_re 'config.DB_URL must not set service' --set-string "config.DB_URL=$db?sslmode=verify-full&sslrootcert=$bundle&service=cmp"
+          reject_render_re 'config.DB_URL must not percent-encode' --set-string "config.DB_URL=$db?sslmode=verify-full&sslrootcert=$bundle&sslmode%3Ddisable"
+          reject_render_re 'config.DB_URL has a query parameter name that is not plain' \
+            --set-string "config.DB_URL=$db?sslmode=verify-full&sslrootcert=$bundle&ssl%6Dode=disable"
+          reject_render_re 'config.DB_URL must spell SSLMODE in lower case' --set-string "config.DB_URL=$db?SSLMODE=verify-full&sslrootcert=$bundle"
+          reject_render_re 'config.DB_URL must carry TLS parameters only in the query string' \
+            --set-string "config.DB_URL=jdbc:postgresql://db.example.internal:5432/db;sslmode=disable?sslmode=verify-full&sslrootcert=$bundle"
+          reject_render_re 'config.DB_URL must use sslmode=verify-full' --set-string 'config.DB_URL=jdbc:aws-wrapper:postgresql://db.example.internal:5432/db?sslmode=require'
+          reject_render_re 'config.DB_URL must be a jdbc:' --set-string 'config.DB_URL=postgresql://db.example.internal:5432/db?sslmode=disable'
+          reject_render_re 'config.DB_URL must not contain' --set-string "config.DB_URL=$db?sslmode=verify-full&sslrootcert=$bundle&x=\${FBX_TAIL}"
+          render_ok --set-string "config.DB_URL=$db?sslmode=verify-full&sslrootcert=$bundle&ApplicationName=cmp&connectTimeout=10"
+          # Datasource, config, profile, SSL bundle and switch names.
+          reject_render_re 'config.db.url is DB_URL in another spelling' --set-string "config.db\.url=$db?sslmode=verify-full&sslrootcert=$bundle"
+          reject_render_re 'config.SPRING_DATASOURCE_URL is not allowed' --set-string "config.SPRING_DATASOURCE_URL=$db?sslmode=require"
+          reject_render_re 'config.SPRING_FLYWAY_URL is not allowed' --set-string "config.SPRING_FLYWAY_URL=$db?sslmode=verify-full&sslrootcert=$bundle"
+          reject_render_re 'config.SPRING_APPLICATION_JSON is not allowed' --set-json 'config.SPRING_APPLICATION_JSON="{\"spring.datasource.url\":\"x\"}"'
+          reject_render_re 'config.SPRING_DATASOURCE_HIKARI_JDBC_URL is not allowed' --set-string config.SPRING_DATASOURCE_HIKARI_JDBC_URL=x
+          reject_render_re 'config.SPRING_CONFIG_IMPORT is not allowed' --set-string config.SPRING_CONFIG_IMPORT=optional:file:/tmp/override.yml
+          reject_render_re 'config.spring.config.activate.on-profile is not allowed' --set-string 'config.spring\.config\.activate\.on-profile=local'
+          reject_render_re 'config.SPRING_SSL_BUNDLE_PEM_DOCUMENTDB_TRUSTSTORE_CERTIFICATE is not allowed' \
+            --set-string config.SPRING_SSL_BUNDLE_PEM_DOCUMENTDB_TRUSTSTORE_CERTIFICATE=file:/tmp/any-ca.pem
+          reject_render_re 'config.PGJDBC_SSL_FACTORY is not allowed' --set-string config.PGJDBC_SSL_FACTORY=org.postgresql.ssl.NonValidatingFactory
+          reject_render_re 'config.FINTECHBANKX_TLS_ENFORCE is not allowed' --set-string config.FINTECHBANKX_TLS_ENFORCE=false
+          reject_render_re 'config.SPRING_PROFILES_DEFAULT is not allowed' --set-string config.SPRING_PROFILES_DEFAULT=local
+          reject_render_re 'config.JDK_JAVA_OPTIONS must not mention .*kafka' --set-string 'config.JDK_JAVA_OPTIONS=-Dspring.Kaf_ka.producer.acks=0'
+          # Kafka protocol and profile.
+          reject_render_re 'kafka.runtime' --set-string kafka.runtime=local
+          reject_render_re 'config.KAFKA_SECURITY_PROTOCOL must be SASL_SSL or SSL' --set-string kafka.runtime=msk --set-string config.KAFKA_SECURITY_PROTOCOL=PLAINTEXT
+          reject_render_re 'must be SSL with kafka.runtime strimzi' --set-string kafka.runtime=strimzi --set-string config.KAFKA_SECURITY_PROTOCOL=SASL_SSL
+          reject_render_re 'is set but kafka.runtime is empty' --set-string kafka.runtime= --set-string config.KAFKA_SECURITY_PROTOCOL=SSL
+          reject_render_re 'config.spring.kafka.security.pro_tocol must be SASL_SSL or SSL' --set-string 'config.spring\.kafka\.security\.pro_tocol=PLAINTEXT'
+          # Kafka client TLS names: trust and key stores, TLS versions, per-client and properties spellings.
+          kafka_tls='is not allowed: a Kafka client TLS setting'
+          reject_render_re "config.SPRING_KAFKA_SSL_TRUSTSTORE_LOCATION $kafka_tls" --set-string config.SPRING_KAFKA_SSL_TRUSTSTORE_LOCATION=file:/etc/other/any.jks
+          reject_render_re "config.SPRING_KAFKA_SSL_TRUST_STORE_LOCATION $kafka_tls" --set-string config.SPRING_KAFKA_SSL_TRUST_STORE_LOCATION=file:/etc/other/any.jks
+          reject_render_re "config.spring.kafka.ssl.trust-store-certificates $kafka_tls" --set-string 'config.spring\.kafka\.ssl\.trust-store-certificates=-----BEGIN CERTIFICATE-----'
+          reject_render_re "config.spring.kafka.s-sl.trust-store-location $kafka_tls" --set-string 'config.spring\.kafka\.s-sl\.trust-store-location=file:/etc/other/any.jks'
+          reject_render_re "config.SPRING_KAFKA_SSL_PROTOCOL $kafka_tls" --set-string config.SPRING_KAFKA_SSL_PROTOCOL=TLSv1
+          reject_render_re "config.SPRING_KAFKA_ADMIN_SSL_TRUST_STORE_CERTIFICATES $kafka_tls" \
+            --set-string 'config.SPRING_KAFKA_ADMIN_SSL_TRUST_STORE_CERTIFICATES=-----BEGIN CERTIFICATE-----'
+          reject_render_re "config.spring.kafka.streams.ssl.key-password $kafka_tls" --set-string 'config.spring\.kafka\.streams\.ssl\.key-password=x'
+          reject_render_re "config.spring.kafka.properties.ssl.truststore.location $kafka_tls" \
+            --set-string 'config.spring\.kafka\.properties\.ssl\.truststore\.location=/etc/other/any.jks'
+          reject_render_re "config.SPRING_KAFKA_PROPERTIES_SSL_TRUSTSTORE_LOCATION $kafka_tls" \
+            --set-string config.SPRING_KAFKA_PROPERTIES_SSL_TRUSTSTORE_LOCATION=/etc/other/any.jks
+          reject_render_re "config.spring.kafka.properties\[ssl.truststore.type\] $kafka_tls" \
+            --set-string 'config.spring\.kafka\.properties\[ssl\.truststore\.type\]=PEM'
+          reject_render_re "config.spring.kafka.pro-perties.ssl.truststore.location $kafka_tls" \
+            --set-string 'config.spring\.kafka\.pro-perties\.ssl\.truststore\.location=/etc/other/any.jks'
+          reject_render_re "config.spring.kafka.streams.properties.ssl.keystore.location $kafka_tls" \
+            --set-string 'config.spring\.kafka\.streams\.properties\.ssl\.keystore\.location=/etc/other/any.p12'
+          reject_render_re "config.SPRING_KAFKA_SSL_TRUST_STORE_LOCATION $kafka_tls" $strimzi \
+            --set-string config.SPRING_KAFKA_SSL_TRUST_STORE_LOCATION=file:/etc/other/any.jks
+          reject_render_re "config.SPRING_KAFKA_SSL_TRUST_STORE_CERTIFICATES $kafka_tls" $strimzi \
+            --set-string 'config.SPRING_KAFKA_SSL_TRUST_STORE_CERTIFICATES=-----BEGIN CERTIFICATE-----'
+          reject_render_re 'config.SPRING_KAFKA_PROPERTIES_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM must be https' \
+            --set-string config.SPRING_KAFKA_PROPERTIES_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM=
+          render_ok --set-string config.SPRING_KAFKA_PROPERTIES_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM=https
+          render_ok --set-string config.SPRING_KAFKA_PROPERTIES_SASL_MECHANISM=AWS_MSK_IAM \
+            --set-string 'config.spring\.kafka\.properties\.sasl\.client\.callback\.handler\.class=software.amazon.msk.auth.iam.IAMClientCallbackHandler' \
+            --set-string config.KAFKA_BOOTSTRAP_SERVERS=b-1.msk.example.internal:9098 \
+            --set-string config.SPRING_KAFKA_CONSUMER_GROUP_ID=compliance-evidence --set-string config.KAFKA_LISTENER_CONCURRENCY=2
+          # KAFKA_TLS_CERT/KEY/CA only from valueFrom.secretKeyRef: the chart renders them from kafkaClientTls.secretName
+          # (deployment.yaml); a config key, in any spelling, is refused.
+          reject_render_re 'config.KAFKA_TLS_CERT is not allowed' $strimzi --set-string 'config.KAFKA_TLS_CERT=-----BEGIN CERTIFICATE-----'
+          reject_render_re 'config.KAFKA_TLS_CA is not allowed: .*Secret' $strimzi --set-string 'config.KAFKA_TLS_CA=-----BEGIN CERTIFICATE-----'
+          reject_render_re 'config.KAFKA_TLS_KEY is not allowed: .*Secret' --set-string config.KAFKA_TLS_KEY=x
+          reject_render_re 'config.Kafka_Tls_Cert is not allowed' --set-string config.Kafka_Tls_Cert=x
+          python3 -c '
+          import sys, yaml
+          docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
+          app = [d for d in docs if d["kind"] == "Deployment"][0]["spec"]["template"]["spec"]["containers"][0]
+          env = {e["name"]: e for e in app["env"] if e["name"].startswith("KAFKA_TLS_")}
+          if sorted(env) != ["KAFKA_TLS_CA", "KAFKA_TLS_CERT", "KAFKA_TLS_KEY"]:
+              sys.exit("strimzi render lacks KAFKA_TLS_CERT/KEY/CA: %s" % sorted(env))
+          for name, e in env.items():
+              if set(e) != {"name", "valueFrom"} or set(e["valueFrom"]) != {"secretKeyRef"}:
+                  sys.exit(name + " must come only from valueFrom.secretKeyRef: %r" % e)
+          print("KAFKA_TLS_CERT/KEY/CA from valueFrom.secretKeyRef only")
+          ' < <(helm template ci "$chart" $args $strimzi)
+          # DocumentDB names (the service has none; the guard keeps them out of the environment).
+          mongodb='is not allowed: a spring.data.mongodb.\* property'
+          reject_render_re "config.SPRING_DATA_MONGODB_URI $mongodb" --set-string 'config.SPRING_DATA_MONGODB_URI=mongodb://docdb.example.internal:27017/db?tls=false'
+          reject_render_re "config.spring.data.mongodb.uri $mongodb" --set-string 'config.spring\.data\.mongodb\.uri=mongodb://docdb.example.internal:27017/db?tls=false'
+          reject_render_re "config.spring.data.mongo-db.uri $mongodb" --set-string 'config.spring\.data\.mongo-db\.uri=mongodb://docdb.example.internal:27017/db?tls=false'
+          reject_render_re "config.spring.data\[mongodb\].uri $mongodb" --set-string 'config.spring\.data\[mongodb\]\.uri=mongodb://docdb.example.internal:27017/db?tls=false'
+          reject_render_re "config.SPRING_DATA_MONGODB_SSL_ENABLED $mongodb" --set-string config.SPRING_DATA_MONGODB_SSL_ENABLED=false
+          reject_render_re "config.spring.data.mongodb.password $mongodb" --set-string 'config.spring\.data\.mongodb\.password=x'
+          reject_render_re 'config.MONGODB_URI is not allowed: MONGODB_URI is the DocumentDB connection string' \
+            --set-string 'config.MONGODB_URI=mongodb://docdb.example.internal:27017/db?tls=false'
+          # Property reading: Spring Boot splits an env name on '.' only and drops '_' inside an element.
+          reject_render_re "config.spring.kafka.s_sl.trust-store-type $kafka_tls" $strimzi --set-string 'config.spring\.kafka\.s_sl\.trust-store-type=PKCS12'
+          reject_render_re "config.spring.kafka.con_sumer.ssl.trust-store-type $kafka_tls" --set-string 'config.spring\.kafka\.con_sumer\.ssl\.trust-store-type=PKCS12'
+          reject_render_re "config.spring.kafka.streams.pro_perties.ssl.truststore.location $kafka_tls" \
+            --set-string 'config.spring\.kafka\.streams\.pro_perties\.ssl\.truststore\.location=/etc/other/any.jks'
+          render_ok --set-string 'config.spring\.kafka\.properties\.ssl\.endpoint_identification\.algorithm=https'
+          reject_render_re "config.spring.data.mongo_db.host $mongodb" --set-string 'config.spring\.data\.mongo_db\.host=placeholder-host'
+          reject_render_re "config.spring.da_ta.mongodb.port $mongodb" --set-string 'config.spring\.da_ta\.mongodb\.port=27018'
+          reject_render_re 'config.spring.pro_files.active is not allowed' --set-string 'config.spring\.pro_files\.active=local'
+          reject_render_re 'config.spring.con_fig.import is not allowed: a spring.config.\* property' --set-string 'config.spring\.con_fig\.import=optional:file:/etc/other/override.yml'
+          reject_render_re 'config.spring.s_sl.bundle.pem.documentdb.truststore.certificate is not allowed: an SSL bundle property' \
+            --set-string 'config.spring\.s_sl\.bundle\.pem\.documentdb\.truststore\.certificate=file:/etc/other/any-ca.pem'
+          reject_render_re "config.fintech_bankx.tls.enforce is not allowed: it can switch off the service's startup TLS assertion" \
+            --set-string 'config.fintech_bankx\.tls\.enforce=false'
+          reject_render_re 'config.spring.data_source.url is not allowed: it can redirect or override the datasource' --set-string 'config.spring\.data_source\.url=jdbc:h2:mem:x'
+          reject_render_re 'config.spring.data_source.driver-class-name is not allowed: it can redirect or override the datasource' \
+            --set-string 'config.spring\.data_source\.driver-class-name=org.h2.Driver'
+          reject_render_re 'config.spring.fly_way.url is not allowed: it can redirect or override the datasource' --set-string 'config.spring\.fly_way\.url=jdbc:h2:mem:x'
           # Platform scrapes the management port through these pod annotations; the outbox alerts depend on them.
           python3 scripts/ci/check-scrape-annotations.py <<<"$rendered"
           if helm template ci "$chart" $args | sed '/prometheus.io\/path:/d' \
