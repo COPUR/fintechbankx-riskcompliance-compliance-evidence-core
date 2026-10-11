@@ -193,7 +193,10 @@ the JVM option variables JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS, _JAVA_OPTIONS and
 JAVA_OPTS whatever their value (a system property outranks every environment
 variable; the guard only checks the value of the first three); LOGGING_LEVEL_*
 (an install-time level could turn on wire logging, which prints credentials
-and personal data); DB_SSL_ROOT_CERT, empty or set (the bundle the TLS
+and personal data); SPRING_MAIN_* whatever the value (spring.main.* changes
+how the context starts: lazy initialization would skip a startup assertion
+that is an ordinary singleton nothing injects, bean definition overriding or
+extra sources could replace one); DB_SSL_ROOT_CERT, empty or set (the bundle the TLS
 startup assertions DatabaseTlsGuard and KafkaTlsGuard, on by default, verify
 against; the chart sets it from the mounted bundle on every container, and
 the service refuses to start without it); and FINTECHBANKXTLS* (the guard
@@ -223,6 +226,8 @@ Takes a dict: key (the config key) and value (its value).
 {{- printf "config.%s must not be set: JVM options can override config.DB_URL and the TLS settings" $key -}}
 {{- else if regexMatch "^LOGGINGLEVEL" $name -}}
 {{- printf "config.%s must not be set: logging levels are fixed in application.yml" $key -}}
+{{- else if regexMatch "^SPRINGMAIN" $name -}}
+{{- printf "config.%s must not be set: spring.main.* changes how the context starts (lazy initialization, bean definition overriding, sources) and could skip or replace a startup assertion" $key -}}
 {{- else if eq $name "DBSSLROOTCERT" -}}
 {{- printf "config.%s must not be set: the chart sets DB_SSL_ROOT_CERT from the mounted RDS CA bundle, which the TLS startup assertions (DatabaseTlsGuard, KafkaTlsGuard; on by default) verify against" $key -}}
 {{- else if regexMatch "^FINTECHBANKXTLS" $name -}}
