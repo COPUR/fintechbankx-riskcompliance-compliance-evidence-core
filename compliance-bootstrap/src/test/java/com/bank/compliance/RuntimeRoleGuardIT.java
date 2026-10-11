@@ -27,6 +27,8 @@ class RuntimeRoleGuardIT {
     private static final String SCRATCH = "compliance_scratch_role_it";
     private static final String SCRATCH_PASSWORD = "compliance_scratch_role_it";
     private static final String REFUSED = "DB_USERNAME (the runtime role the service connects as) must be least privilege";
+    private static final String SCRATCH_SCHEMA = "sc_cmp_schema_owner_it";
+    private static final String SCRATCH_SCHEMA_OWNER = "compliance_scratch_schema_owner_it";
 
     private static JdbcTemplate owner;
     private static String tableOwner;
@@ -136,6 +138,41 @@ class RuntimeRoleGuardIT {
             .hasMessageContaining(REFUSED)
             .hasMessageContaining(finding)
             .hasMessageNotContaining(SCRATCH);
+    }
+
+    /**
+     * The owner of the schema may differ from the owner of the table (a DBA reassigning either): a member of the
+     * schema owner can SET ROLE to it and drop or replace the table, so membership of it is refused as well. The
+     * membership is NOINHERIT so that no other check (CREATE on the schema, an owned table) fires first.
+     */
+    @Test
+    void refusesAMemberOfTheOwnerOfTheSchemaWhenItIsNotTheTableOwner() {
+        owner.execute("drop schema if exists " + SCRATCH_SCHEMA + " cascade");
+        owner.execute("drop role if exists " + SCRATCH_SCHEMA_OWNER);
+        owner.execute("create role " + SCRATCH_SCHEMA_OWNER);
+        owner.execute("grant " + SCRATCH_SCHEMA_OWNER + " to " + PostgresTestDatabase.ownerUser());
+        try {
+            owner.execute("create schema " + SCRATCH_SCHEMA + " authorization " + SCRATCH_SCHEMA_OWNER);
+            owner.execute("create table " + SCRATCH_SCHEMA + ".compliance_screening (screening_id varchar(64) primary key)");
+            owner.execute("drop role if exists " + SCRATCH);
+            owner.execute("create role " + SCRATCH + " login password '" + SCRATCH_PASSWORD + "'");
+            owner.execute("grant usage on schema " + SCRATCH_SCHEMA + " to " + SCRATCH);
+            owner.execute("grant select, insert on " + SCRATCH_SCHEMA + ".compliance_screening to " + SCRATCH);
+            owner.execute("grant " + SCRATCH_SCHEMA_OWNER + " to " + SCRATCH + " with inherit false");
+
+            assertThatThrownBy(() -> new RuntimeRoleGuard(
+                    new DriverManagerDataSource(PostgresTestDatabase.url(), SCRATCH, SCRATCH_PASSWORD), SCRATCH_SCHEMA).verify())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(REFUSED)
+                .hasMessageContaining("member of the owner of the schema")
+                .hasMessageNotContaining("CREATE on the schema")
+                .hasMessageNotContaining(SCRATCH)
+                .hasMessageNotContaining(SCRATCH_SCHEMA_OWNER);
+        } finally {
+            owner.execute("drop schema if exists " + SCRATCH_SCHEMA + " cascade");
+            owner.execute("drop owned by " + SCRATCH_SCHEMA_OWNER + " cascade");
+            owner.execute("drop role if exists " + SCRATCH_SCHEMA_OWNER);
+        }
     }
 
     /** V7's grants alone pass: the scratch shape is least privilege until a test adds one thing. */
