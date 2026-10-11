@@ -186,6 +186,14 @@ jobs:
             reject_render "config.${key//\\/} must not be set: logging levels are fixed in application.yml" \
               --set "config.$key=TRACE"
           done
+          # spring.main.* changes how the context starts: lazy initialization skips any startup assertion that is an
+          # ordinary singleton nothing injects, bean definition overriding or extra sources could replace one. The
+          # guards are hooks lazy initialization cannot skip, and the chart refuses the whole family whatever the value.
+          for key in SPRING_MAIN_LAZY_INITIALIZATION 'spring\.main\.lazy-initialization' \
+              'spring\.main\.allow-bean-definition-overriding' SPRING_MAIN_SOURCES; do
+            reject_render "config.${key//\\/} must not be set: spring.main.* changes how the context starts" \
+              --set "config.$key=true"
+          done
           # DB_SSL_ROOT_CERT is the bundle the TLS startup assertions (DatabaseTlsGuard, KafkaTlsGuard; on by default)
           # verify against; the chart sets it from the mounted bundle on every container, so a values key, empty or
           # set, is refused.
