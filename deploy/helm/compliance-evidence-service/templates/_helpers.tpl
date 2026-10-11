@@ -132,13 +132,17 @@ data is the runtime credential, extraData the schema owner's (db-migration).
 {{/*
 The datasource / TLS guard, called first by deployment.yaml and
 migration-job.yaml (a failure stops the whole render). fbx.guard is the
-platform guard, vendored unchanged in _fbx_helpers.tpl (cicd-templates a4f0072;
-its README, "Vendoring the guard"), fed through this adapter. Every route of
-this chart into a container's environment is mapped:
+platform guard, vendored whole and unchanged, without a header, in
+_fbx_helpers.tpl (cicd-templates 6b6c317; its README, "Vendoring the guard";
+CI pins the digest with scripts/ci/verify-vendored-guard.sh), fed through this
+adapter. Every route of this chart into a container's environment is mapped:
   - config: config.* (the ConfigMap the app pods load with envFrom; the
     migration Job renders config.DB_URL and config.DB_USERNAME into its env);
   - databaseCa: always enabled (the bundle volume is not optional), so
-    config.DB_URL must carry sslrootcert=<mountPath>/<key> exactly once;
+    config.DB_URL must carry sslrootcert=<mountPath>/<key> exactly once, and
+    the guard pins the mount the templates render (compliance.databaseCaVolume,
+    compliance.databaseCaMount): mountPath /etc/fintechbankx/rds-ca, key
+    global-bundle.pem, configMapName rds-ca-bundle;
   - kafka.runtime: the only Spring profile (fbx.kafkaProfile, configmap.yaml);
   - externalSecret.data / extraData: the runtime and db-migration secret keys
     and remote names (compliance.externalSecretData).
@@ -153,7 +157,8 @@ compliance.validateKafkaRuntime (strimzi needs kafkaClientTls).
 {{- $secrets := include "compliance.externalSecretData" . | fromJson -}}
 {{- include "fbx.guard" (dict "Values" (dict
       "config" .Values.config
-      "databaseCa" (dict "enabled" true "mountPath" .Values.databaseCa.mountPath "key" .Values.databaseCa.key)
+      "databaseCa" (dict "enabled" true "mountPath" .Values.databaseCa.mountPath "key" .Values.databaseCa.key
+        "configMapName" .Values.databaseCa.configMapName)
       "kafka" (dict "runtime" (.Values.kafka | default dict).runtime)
       "externalSecret" (dict "enabled" .Values.externalSecret.enabled
         "data" $secrets.data "extraData" $secrets.extraData))) -}}

@@ -44,7 +44,7 @@ podDisruptionBudget:
 config:
   # Terraform output jdbc_url, e.g. jdbc:postgresql://<aurora-writer-endpoint>:5432/db_cmp_evidence_<env>?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem
   # Every key and value here passes the platform datasource/TLS guard (fbx.guard, vendored from
-  # cicd-templates a4f0072 in templates/_fbx_helpers.tpl) and the chart's own rules (compliance.guard).
+  # cicd-templates 6b6c317 in templates/_fbx_helpers.tpl) and the chart's own rules (compliance.guard).
   # DB_URL: jdbc:postgresql: with sslmode=verify-full and sslrootcert=<databaseCa.mountPath>/<key> exactly
   # once (lower-case names), no sslfactory, sslfactoryarg, sslhostnameverifier, sslpasswordcallback or
   # service, no '${' or '$('. No key may name a datasource, Flyway, Liquibase, R2DBC, spring.config.*,
@@ -90,6 +90,8 @@ kafka:
 # unverified. There is no switch to turn it off: this service always has a
 # PostgreSQL database, and the assertions' only switches (the local profile, the
 # test property fintechbankx.tls.enforce) are refused as config keys.
+# The platform guard (fbx.guard, cicd-templates 6b6c317) pins all three values
+# below while the bundle is mounted: any other value, or null, fails the render.
 databaseCa:
   configMapName: rds-ca-bundle
   key: global-bundle.pem
