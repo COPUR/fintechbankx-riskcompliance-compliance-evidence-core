@@ -1,5 +1,6 @@
 package com.bank.compliance;
 
+import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import javax.sql.DataSource;
@@ -16,24 +17,36 @@ import java.util.Map;
  * <ul>
  * <li>not a member of the owner of {@code compliance_screening}
  * ({@code pg_has_role(..., 'MEMBER')}: a member acts as the owner and could
- * disable the trigger, TRUNCATE or drop the table);</li>
+ * disable the trigger, TRUNCATE or drop the table), nor of the owner of the
+ * schema (the two may differ after a DBA reassigns one; a member of the schema
+ * owner can SET ROLE to it and drop or replace the table);</li>
  * <li>owns no table in the schema;</li>
  * <li>has no CREATE on the schema;</li>
  * <li>has no UPDATE, DELETE, TRUNCATE or TRIGGER on {@code compliance_screening}
- * ({@code has_table_privilege}).</li>
+ * ({@code has_table_privilege});</li>
+ * <li>has no UPDATE or REFERENCES on any of its columns either
+ * ({@code has_any_column_privilege}: a column-level GRANT UPDATE (decision)
+ * is invisible to {@code has_table_privilege} and would let the role rewrite
+ * a decision; SELECT and INSERT are V7's own grants).</li>
  * </ul>
  * Any finding fails the context, so a pod on a wrongly bootstrapped or
  * over-granted role never serves. The message names the property and the
  * checks, never the role name, the URL or a credential. Not loaded by the
  * migrate-only Job, which connects as the owner on purpose.
+ *
+ * <p>A {@link SmartInitializingSingleton}, registered eagerly by
+ * {@link RuntimeRoleConfiguration}: it verifies once every singleton exists,
+ * before the web server starts, and {@code spring.main.lazy-initialization}
+ * cannot skip it.
  */
-public final class RuntimeRoleGuard {
+public final class RuntimeRoleGuard implements SmartInitializingSingleton {
 
     static final String RUNTIME_USERNAME = "DB_USERNAME";
     static final String EVIDENCE_TABLE = "compliance_screening";
 
     private static final String SQL = """
             select pg_has_role(current_user, c.relowner, 'MEMBER') as member_of_owner,
+                   pg_has_role(current_user, n.nspowner, 'MEMBER') as member_of_schema_owner,
                    (select count(*) from pg_class t
                      where t.relnamespace = n.oid and t.relkind in ('r', 'p')
                        and pg_get_userbyid(t.relowner) = current_user) as owned_tables,
@@ -41,7 +54,9 @@ public final class RuntimeRoleGuard {
                    has_table_privilege(current_user, c.oid, 'UPDATE') as update_on_evidence,
                    has_table_privilege(current_user, c.oid, 'DELETE') as delete_on_evidence,
                    has_table_privilege(current_user, c.oid, 'TRUNCATE') as truncate_on_evidence,
-                   has_table_privilege(current_user, c.oid, 'TRIGGER') as trigger_on_evidence
+                   has_table_privilege(current_user, c.oid, 'TRIGGER') as trigger_on_evidence,
+                   has_any_column_privilege(current_user, c.oid, 'UPDATE') as update_on_a_column,
+                   has_any_column_privilege(current_user, c.oid, 'REFERENCES') as references_on_evidence
               from pg_class c
               join pg_namespace n on n.oid = c.relnamespace
              where n.nspname = ? and c.relname = ? and c.relkind in ('r', 'p')
@@ -55,6 +70,11 @@ public final class RuntimeRoleGuard {
         this.schema = schema;
     }
 
+    @Override
+    public void afterSingletonsInstantiated() {
+        verify();
+    }
+
     void verify() {
         List<Map<String, Object>> rows = jdbc.queryForList(SQL, schema, EVIDENCE_TABLE);
         if (rows.isEmpty()) {
@@ -66,6 +86,9 @@ public final class RuntimeRoleGuard {
         if (flag(row, "member_of_owner")) {
             findings.add("it is a member of the owner of " + EVIDENCE_TABLE + " (or is the owner)");
         }
+        if (flag(row, "member_of_schema_owner")) {
+            findings.add("it is a member of the owner of the schema (or is the owner)");
+        }
         if (((Number) row.get("owned_tables")).longValue() > 0) {
             findings.add("it owns a table in the schema");
         }
@@ -76,6 +99,12 @@ public final class RuntimeRoleGuard {
             if (flag(row, privilege.toLowerCase() + "_on_evidence")) {
                 findings.add("it has " + privilege + " on " + EVIDENCE_TABLE);
             }
+        }
+        if (flag(row, "update_on_a_column") && !flag(row, "update_on_evidence")) {
+            findings.add("it has UPDATE on a column of " + EVIDENCE_TABLE);
+        }
+        if (flag(row, "references_on_evidence")) {
+            findings.add("it has REFERENCES on " + EVIDENCE_TABLE + " (table or column)");
         }
         if (!findings.isEmpty()) {
             throw new IllegalStateException(RUNTIME_USERNAME + " (the runtime role the service connects as) must be least"

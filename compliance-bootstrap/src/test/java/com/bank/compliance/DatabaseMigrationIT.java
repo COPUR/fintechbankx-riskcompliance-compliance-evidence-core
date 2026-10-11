@@ -171,8 +171,9 @@ class DatabaseMigrationIT {
         owner.execute("create role " + OWNER_MEMBER_ROLE + " login password '" + OWNER_MEMBER_PASSWORD
             + "' in role " + tableOwner);
         try {
+            // Thrown by the guard once every singleton exists (SmartInitializingSingleton), unwrapped.
             assertThatThrownBy(() -> serviceAs(OWNER_MEMBER_ROLE, OWNER_MEMBER_PASSWORD, extra))
-                .rootCause().isInstanceOf(IllegalStateException.class)
+                .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("DB_USERNAME (the runtime role the service connects as) must be least privilege")
                 .hasMessageContaining("member of the owner")
                 .hasMessageNotContaining(OWNER_MEMBER_ROLE)

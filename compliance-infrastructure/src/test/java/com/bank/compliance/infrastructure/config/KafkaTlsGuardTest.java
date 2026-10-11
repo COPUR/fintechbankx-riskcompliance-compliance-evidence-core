@@ -8,11 +8,8 @@ import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
 import org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration;
-import org.springframework.boot.autoconfigure.kafka.KafkaProperties;
 import org.springframework.boot.autoconfigure.ssl.SslAutoConfiguration;
 import org.springframework.boot.builder.SpringApplicationBuilder;
-import org.springframework.boot.context.properties.bind.Binder;
-import org.springframework.boot.ssl.DefaultSslBundleRegistry;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
@@ -221,8 +218,6 @@ class KafkaTlsGuardTest {
     }
 
     private static KafkaTlsGuard guard(MockEnvironment environment) {
-        KafkaProperties kafka = Binder.get(environment).bind("spring.kafka", KafkaProperties.class)
-                .orElseGet(KafkaProperties::new);
-        return new KafkaTlsGuard(kafka, new DefaultSslBundleRegistry());
+        return new KafkaTlsGuard(environment);
     }
 }

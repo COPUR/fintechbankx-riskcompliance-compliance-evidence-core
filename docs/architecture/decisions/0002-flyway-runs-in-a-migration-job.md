@@ -61,15 +61,22 @@ run Flyway as a Job: its pods carry `app.kubernetes.io/name=<service account>`
    record, repair or remove a migration. After that validate, `RuntimeRoleGuard`
    (`RuntimeRoleConfiguration`, service context only, never the Job) asserts on
    the service's own pool that `current_user` is not a member of the owner of
-   `compliance_screening`, owns no table in the schema, has no `CREATE` on it
-   and no `UPDATE`, `DELETE`, `TRUNCATE` or `TRIGGER` on the evidence; any
-   finding fails the context without naming the role or a credential. It is
-   on by default like the TLS assertions and off only with the `local`
-   profile (a single-user local run is its own owner); the test switch
-   `fintechbankx.tls.enforce=false` leaves it on, and the integration tests
-   run it as the least-privilege runtime role. Tests keep `migrate` as the owner
-   (`PostgresTestDatabase`). `DatabaseMigrationIT` covers the Job and the
-   service, `RuntimeRoleGuardIT` each privilege with a scratch role.
+   `compliance_screening` nor of the owner of the schema, owns no table in the
+   schema, has no `CREATE` on it, no `UPDATE`, `DELETE`, `TRUNCATE` or
+   `TRIGGER` on the evidence and no `UPDATE` or `REFERENCES` on any of its
+   columns (`has_any_column_privilege`: a column-level grant is invisible to
+   `has_table_privilege`); any finding fails the context without naming the
+   role or a credential. The guard is a `SmartInitializingSingleton` registered
+   `@Lazy(false)`, so it runs once every singleton exists, before the web
+   server, and `spring.main.lazy-initialization=true` (a config key the chart
+   refuses) cannot skip it; it depends on Flyway's initializer, so the validate
+   still runs first. It is on by default like the TLS assertions and off only
+   with the `local` profile (a single-user local run is its own owner); the
+   test switch `fintechbankx.tls.enforce=false` leaves it on, and the
+   integration tests run it as the least-privilege runtime role. Tests keep
+   `migrate` as the owner (`PostgresTestDatabase`). `DatabaseMigrationIT`
+   covers the Job and the service (lazy initialization included),
+   `RuntimeRoleGuardIT` each privilege with a scratch role.
 5. **`externalSecret.migrationSecretName` is required and is not the runtime
    secret.** The chart no longer renders without it, so the service can no
    longer migrate silently as the runtime role; it also refuses the same
