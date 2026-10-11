@@ -16,6 +16,10 @@ serviceAccount:
 podLabels:
   app.kubernetes.io/part-of: fintechbankx-compliance
   fintechbankx.io/service-id: svc-cmp-evidence
+  # The app pods only. The migration Job (templates/migration-job.yaml) writes
+  # sidecar.istio.io/inject: "false" over this label and has no switch of its
+  # own: turning the sidecar on for the Job needs a hook ServiceAccount the mesh
+  # authorises first (runbook, "Database migrations (Flyway Job)").
   sidecar.istio.io/inject: "true"
 
 service:
