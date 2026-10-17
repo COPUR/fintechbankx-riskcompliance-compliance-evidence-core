@@ -41,11 +41,11 @@ The service never migrates its own schema: it starts with `compliance.database.f
 
 ```bash
 # Gradle
-SPRING_DATASOURCE_PASSWORD=... ./gradlew :compliance-bootstrap:bootRun --args=migrate
-SPRING_DATASOURCE_PASSWORD=... ./gradlew :compliance-bootstrap:bootRun
+SPRING_DATASOURCE_PASSWORD=<password> ./gradlew :compliance-bootstrap:bootRun --args=migrate
+SPRING_DATASOURCE_PASSWORD=<password> ./gradlew :compliance-bootstrap:bootRun
 # jar or image: the first argument "migrate" runs DatabaseMigration and exits 0 when every migration is applied
 java -jar compliance-evidence-service.jar migrate && java -jar compliance-evidence-service.jar
-docker run --rm -e DB_URL=... -e SPRING_DATASOURCE_PASSWORD=... compliance-evidence-service migrate
+docker run --rm -e DB_URL=... -e SPRING_DATASOURCE_PASSWORD=<password> compliance-evidence-service migrate
 ```
 
 Without `DB_MIGRATION_USERNAME` / `DB_MIGRATION_PASSWORD` the migrate step uses the app credential (single-user local runs); V7 and V12 then grant nothing new. The integration tests keep migrating as the owner (`PostgresTestDatabase`), so `./gradlew check` needs no separate step.
