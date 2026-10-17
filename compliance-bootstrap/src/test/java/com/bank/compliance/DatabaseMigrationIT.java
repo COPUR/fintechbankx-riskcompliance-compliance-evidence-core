@@ -36,8 +36,6 @@ class DatabaseMigrationIT {
     /** Built from a constant so the publication secret scan does not read a test argument as a credential. */
     private static final String DATASOURCE_PASSWORD = "spring.datasource.password";
 
-    private static final String LAZY_INITIALIZATION = "--spring.main.lazy-initialization=true";
-
     private static final String JOB_SCHEMA = "sc_cmp_evidence_job_it";
     private static final String SERVICE_SCHEMA = "sc_cmp_evidence";
     private static final String RDS_BUNDLE = "/etc/fintechbankx/rds-ca/global-bundle.pem";
@@ -221,7 +219,7 @@ class DatabaseMigrationIT {
         String schema = JOB_SCHEMA + "_failed_lazy";
         owner.execute("drop schema if exists " + schema + " cascade");
         try {
-            String[] arguments = with(job(schema), "--DB_USERNAME=role_that_does_not_exist", LAZY_INITIALIZATION);
+            String[] arguments = with(with(job(schema), "--DB_USERNAME=role_that_does_not_exist"), LAZY_INITIALIZATION);
 
             assertThat(DatabaseMigration.run(arguments)).isOne();
         } finally {
