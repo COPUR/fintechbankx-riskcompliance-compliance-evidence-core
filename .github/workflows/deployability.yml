@@ -194,6 +194,14 @@ jobs:
             reject_render "config.${key//\\/} must not be set: spring.main.* changes how the context starts" \
               --set "config.$key=true"
           done
+          # Hibernate's schema management and Spring's SQL init change the schema at startup, before the runtime-role
+          # check runs; the schema belongs to the migration Job alone, so the chart refuses both families.
+          for key in SPRING_JPA_HIBERNATE_DDL_AUTO 'spring\.jpa\.hibernate\.ddl-auto' SPRING_JPA_GENERATE_DDL \
+              'spring\.jpa\.properties\.hibernate\.hbm2ddl\.auto' SPRING_SQL_INIT_MODE 'spring\.sql\.init\.schema-locations' \
+              'hibernate\.hbm2ddl\.auto' 'jakarta\.persistence\.schema-generation\.database\.action'; do
+            reject_render "config.${key//\\/} must not be set: the schema belongs to the migration Job" \
+              --set-string "config.$key=update"
+          done
           # DB_SSL_ROOT_CERT is the bundle the TLS startup assertions (DatabaseTlsGuard, KafkaTlsGuard; on by default)
           # verify against; the chart sets it from the mounted bundle on every container, so a values key, empty or
           # set, is refused.

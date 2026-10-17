@@ -196,7 +196,10 @@ variable; the guard only checks the value of the first three); LOGGING_LEVEL_*
 and personal data); SPRING_MAIN_* whatever the value (spring.main.* changes
 how the context starts: lazy initialization would skip a startup assertion
 that is an ordinary singleton nothing injects, bean definition overriding or
-extra sources could replace one); DB_SSL_ROOT_CERT, empty or set (the bundle the TLS
+extra sources could replace one); SPRING_JPA_*, SPRING_SQL_INIT_*, HIBERNATE_*
+and JAKARTA/JAVAX_PERSISTENCE_* (Hibernate schema management and SQL init
+would change the schema at startup, before the runtime-role check; the schema
+belongs to the migration Job); DB_SSL_ROOT_CERT, empty or set (the bundle the TLS
 startup assertions DatabaseTlsGuard and KafkaTlsGuard, on by default, verify
 against; the chart sets it from the mounted bundle on every container, and
 the service refuses to start without it); and FINTECHBANKXTLS* (the guard
@@ -228,6 +231,8 @@ Takes a dict: key (the config key) and value (its value).
 {{- printf "config.%s must not be set: logging levels are fixed in application.yml" $key -}}
 {{- else if regexMatch "^SPRINGMAIN" $name -}}
 {{- printf "config.%s must not be set: spring.main.* changes how the context starts (lazy initialization, bean definition overriding, sources) and could skip or replace a startup assertion" $key -}}
+{{- else if regexMatch "^(SPRINGJPA|SPRINGSQLINIT|HIBERNATE|JAKARTAPERSISTENCE|JAVAXPERSISTENCE)" $name -}}
+{{- printf "config.%s must not be set: the schema belongs to the migration Job; Hibernate schema management and SQL init would change it at startup, before the runtime-role check" $key -}}
 {{- else if eq $name "DBSSLROOTCERT" -}}
 {{- printf "config.%s must not be set: the chart sets DB_SSL_ROOT_CERT from the mounted RDS CA bundle, which the TLS startup assertions (DatabaseTlsGuard, KafkaTlsGuard; on by default) verify against" $key -}}
 {{- else if regexMatch "^FINTECHBANKXTLS" $name -}}
