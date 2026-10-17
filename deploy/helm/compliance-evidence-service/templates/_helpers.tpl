@@ -231,8 +231,8 @@ Takes a dict: key (the config key) and value (its value).
 {{- printf "config.%s must not be set: logging levels are fixed in application.yml" $key -}}
 {{- else if regexMatch "^SPRINGMAIN" $name -}}
 {{- printf "config.%s must not be set: spring.main.* changes how the context starts (lazy initialization, bean definition overriding, sources) and could skip or replace a startup assertion" $key -}}
-{{- else if regexMatch "^(SPRINGJPA|SPRINGSQLINIT|HIBERNATE|JAKARTAPERSISTENCE|JAVAXPERSISTENCE)" $name -}}
-{{- printf "config.%s must not be set: the schema belongs to the migration Job; Hibernate schema management and SQL init would change it at startup, before the runtime-role check" $key -}}
+{{- else if regexMatch "^(SPRINGJPA|SPRINGSQLINIT|HIBERNATE|JAKARTAPERSISTENCE|JAVAXPERSISTENCE|COMPLIANCEDATABASEFLYWAY)" $name -}}
+{{- printf "config.%s must not be set: the schema belongs to the migration Job; Hibernate schema management, SQL init and compliance.database.flyway would change it at startup, before the runtime-role check" $key -}}
 {{- else if eq $name "DBSSLROOTCERT" -}}
 {{- printf "config.%s must not be set: the chart sets DB_SSL_ROOT_CERT from the mounted RDS CA bundle, which the TLS startup assertions (DatabaseTlsGuard, KafkaTlsGuard; on by default) verify against" $key -}}
 {{- else if regexMatch "^FINTECHBANKXTLS" $name -}}
