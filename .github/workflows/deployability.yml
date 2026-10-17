@@ -36,32 +36,34 @@ jobs:
           version: v3.16.3
       - name: Install kubeconform
         shell: bash
-        env:
-          KUBECONFORM_VERSION: v0.6.7
-          # sha256 of kubeconform-linux-amd64.tar.gz, from the release's CHECKSUMS file.
-          KUBECONFORM_SHA256: 95f14e87aa28c09d5941f11bd024c1d02fdc0303ccaa23f61cef67bc92619d73
         run: |
           tmpdir="$(mktemp -d)"
-          curl -sSfL -o "$tmpdir/kubeconform.tar.gz" \
-            "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
-          echo "${KUBECONFORM_SHA256}  $tmpdir/kubeconform.tar.gz" | sha256sum -c -
-          tar -xzf "$tmpdir/kubeconform.tar.gz" -C "$tmpdir" kubeconform
+          # Asset per runner architecture (hosted amd64, fbx-ci arm64), each checked against the release's sha256
+          # (governance ci-runner/tool-downloads-by-arch.snippet.sh).
+          case "$(uname -m)" in
+            x86_64) kubeconform_arch=amd64; kubeconform_sha=95f14e87aa28c09d5941f11bd024c1d02fdc0303ccaa23f61cef67bc92619d73 ;;
+            aarch64|arm64) kubeconform_arch=arm64; kubeconform_sha=dc82f79bb03c5479b1ae5fd4af221e4b5a3111f62bf01a2795d9c5c20fa96644 ;;
+            *) echo "unsupported runner architecture $(uname -m)"; exit 1 ;;
+          esac
+          curl -sSfL -o "$tmpdir/kubeconform.tar.gz" "https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-${kubeconform_arch}.tar.gz"
+          echo "${kubeconform_sha}  $tmpdir/kubeconform.tar.gz" | sha256sum -c -
+          tar -xz -C "$tmpdir" -f "$tmpdir/kubeconform.tar.gz"
           sudo install "$tmpdir/kubeconform" /usr/local/bin/kubeconform
           rm -rf "$tmpdir"
       # verify-vendored-guard.sh needs node 18 or later.
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Vendored platform guard (cicd-templates 6b6c317)
+      - name: Vendored platform guard (cicd-templates 73e1881)
         shell: bash
         run: |
           # Source: COPUR/fintechbankx-platform-delivery-iac-cicd-templates
-          #   charts/fintechbankx-service/templates/_helpers.tpl at commit 6b6c317, copied whole and unchanged,
+          #   charts/fintechbankx-service/templates/_helpers.tpl at commit 73e1881, copied whole and unchanged,
           #   without a header, to templates/_fbx_helpers.tpl; scripts/ci/verify-vendored-guard.sh from the same commit.
           # Checks (a) the one file defining fbx.guard has this sha256, (b) no other fbx.* define or block anywhere in
           # the chart, (c) every workload template (Deployment, migration Job) runs fbx.guard, here through the
           # compliance.guard adapter, before any output. Re-copy both files and re-pin digest and commit together.
-          bash scripts/ci/verify-vendored-guard.sh deploy/helm/compliance-evidence-service 8ba2e4a11ead019c25bf0a01e4fe4bbabb6fef0e1980e5fa828ccb9f5673f8ba
+          bash scripts/ci/verify-vendored-guard.sh deploy/helm/compliance-evidence-service 4f2cdfe056f5afce0297f699c8b66cb80dc42e8e311759bf4a973f8a15b28b2d
       - name: Lint and render chart
         run: |
           chart=deploy/helm/compliance-evidence-service
@@ -191,7 +193,7 @@ jobs:
           # guards are hooks lazy initialization cannot skip, and the chart refuses the whole family whatever the value.
           for key in SPRING_MAIN_LAZY_INITIALIZATION 'spring\.main\.lazy-initialization' \
               'spring\.main\.allow-bean-definition-overriding' SPRING_MAIN_SOURCES; do
-            reject_render "config.${key//\\/} must not be set: spring.main.* changes how the context starts" \
+            reject_render "config.${key//\\/} is not allowed: a spring.main.* property" \
               --set "config.$key=true"
           done
           # The service's own Flyway mode (compliance.database.flyway) is validate in every pod; only the migration Job,
@@ -200,11 +202,12 @@ jobs:
             reject_render "config.${key//\\/} must not be set: the schema belongs to the migration Job" --set-string "config.$key=migrate"
           done
           # Hibernate's schema management and Spring's SQL init change the schema at startup, before the runtime-role
-          # check runs; the schema belongs to the migration Job alone, so the chart refuses both families.
+          # check runs; the schema belongs to the migration Job alone. The vendored platform guard (cicd-templates 73e1881)
+          # refuses both families on every route before the chart's own rule, so its message is the one expected.
           for key in SPRING_JPA_HIBERNATE_DDL_AUTO 'spring\.jpa\.hibernate\.ddl-auto' SPRING_JPA_GENERATE_DDL \
               'spring\.jpa\.properties\.hibernate\.hbm2ddl\.auto' SPRING_SQL_INIT_MODE 'spring\.sql\.init\.schema-locations' \
               'hibernate\.hbm2ddl\.auto' 'jakarta\.persistence\.schema-generation\.database\.action'; do
-            reject_render "config.${key//\\/} must not be set: the schema belongs to the migration Job" \
+            reject_render "config.${key//\\/} is not allowed: a schema-management setting" \
               --set-string "config.$key=update"
           done
           # DB_SSL_ROOT_CERT is the bundle the TLS startup assertions (DatabaseTlsGuard, KafkaTlsGuard; on by default)
@@ -439,9 +442,12 @@ jobs:
           reject_render_re 'config.SPRING_KAFKA_PROPERTIES_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM must be https' \
             --set-string config.SPRING_KAFKA_PROPERTIES_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM=
           render_ok --set-string config.SPRING_KAFKA_PROPERTIES_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM=https
-          render_ok --set-string config.SPRING_KAFKA_PROPERTIES_SASL_MECHANISM=AWS_MSK_IAM \
-            --set-string 'config.spring\.kafka\.properties\.sasl\.client\.callback\.handler\.class=software.amazon.msk.auth.iam.IAMClientCallbackHandler' \
-            --set-string config.KAFKA_BOOTSTRAP_SERVERS=b-1.msk.example.internal:9098 \
+          # The MSK IAM sasl.* settings come from the image's kafka-msk profile; the vendored platform guard
+          # (cicd-templates 73e1881) refuses every Kafka SASL or JAAS name. Other Kafka names stay allowed.
+          reject_render "config.SPRING_KAFKA_PROPERTIES_SASL_MECHANISM is not allowed: a Kafka SASL or JAAS setting" --set-string config.SPRING_KAFKA_PROPERTIES_SASL_MECHANISM=AWS_MSK_IAM
+          reject_render "config.spring.kafka.properties.sasl.client.callback.handler.class is not allowed: a Kafka SASL or JAAS setting" \
+            --set-string 'config.spring\.kafka\.properties\.sasl\.client\.callback\.handler\.class=software.amazon.msk.auth.iam.IAMClientCallbackHandler'
+          render_ok --set-string config.KAFKA_BOOTSTRAP_SERVERS=b-1.msk.example.internal:9098 \
             --set-string config.SPRING_KAFKA_CONSUMER_GROUP_ID=compliance-evidence --set-string config.KAFKA_LISTENER_CONCURRENCY=2
           # KAFKA_TLS_CERT/KEY/CA only from valueFrom.secretKeyRef: the chart renders them from kafkaClientTls.secretName
           # (deployment.yaml); a config key, in any spelling, is refused.
@@ -531,6 +537,67 @@ jobs:
           python3 scripts/ci/check-migration-job.py "$sa" <<<"$rendered"
           helm template ci "$chart" -f "$chart/values-dev.yaml" $args | python3 scripts/ci/check-migration-job.py "$sa"
           # ...and the check catches each way back to the old shape.
+          # Platform guard cases of cicd-templates 73e1881 (README "Vendoring the guard", step 4), schema_management_names_test,
+          # unmatched_bracket_names_test and the validate-chart.sh must_fail cases added since 6b6c317, on the routes this
+          # chart has: config (extraEnv, javaToolOptions and values-driven ExternalSecret keys are not values of this chart). Each failing case keeps the platform's
+          # pattern (an ERE), so it cannot pass because the render failed for another reason. A control must not be refused
+          # by fbx.guard; the chart's own stricter rules (a SPRINGJPA* or HIBERNATE* prefix, no extraEnv) may still refuse it.
+          gvec="$(mktemp -d)"
+          n_g=0
+          chart_own_refusal='must not be set: the schema belongs to the migration Job|is not supported by this chart'
+          guard_render_re() {
+            local want="$1"; shift
+            local out
+            if out="$(helm template ci "$chart" $args "$@" 2>&1)"; then
+              echo "chart rendered with $*" >&2; exit 1
+            fi
+            if ! grep -qE -- "$want" <<<"$out"; then
+              echo "render with $* failed without /$want/: $out" >&2; exit 1
+            fi
+          }
+          guard_case_re() {
+            n_g=$((n_g + 1))
+            printf '%s\n' "$2" > "$gvec/g$n_g.yaml"
+            guard_render_re "$1" -f "$gvec/g$n_g.yaml"
+          }
+          guard_ok() {
+            local out
+            n_g=$((n_g + 1))
+            printf '%s\n' "$2" > "$gvec/g$n_g.yaml"
+            out="$(helm template ci "$chart" $args -f "$gvec/g$n_g.yaml" 2>&1)" && return 0
+            if ! grep -qE -- "$chart_own_refusal" <<<"$out"; then
+              echo "fbx.guard refused the control $1: $out" >&2; exit 1
+            fi
+          }
+          # schema_management_names_test.yaml
+          guard_case_re 'config.SPRING_JPA_HIBERNATE_DDL_AUTO is not allowed: a schema-management setting' \
+            '{"config": {"SPRING_JPA_HIBERNATE_DDL_AUTO": "create-drop"}}'
+          guard_case_re 'config.spring.jpa.generate-ddl is not allowed: a schema-management setting' \
+            '{"config": {"spring.jpa.generate-ddl": "true"}}'
+          guard_case_re 'config.SPRING_JPA_PROPERTIES_HIBERNATE_HBM2DDL_AUTO is not allowed: a schema-management setting' \
+            '{"config": {"SPRING_JPA_PROPERTIES_HIBERNATE_HBM2DDL_AUTO": "update"}}'
+          guard_case_re 'config.SPRING_SQLINIT_MODE is not allowed: a schema-management setting' \
+            '{"config": {"SPRING_SQLINIT_MODE": "always"}}'
+          guard_case_re 'config.JAVAX_PERSISTENCE_SCHEMA_GENERATION_DATABASE_ACTION is not allowed: a schema-management setting' \
+            '{"config": {"JAVAX_PERSISTENCE_SCHEMA_GENERATION_DATABASE_ACTION": "drop-and-create"}}'
+          guard_case_re 'config.spring.j_pa.hibernate.ddl-auto is not allowed: a schema-management setting' \
+            '{"config": {"spring.j_pa.hibernate.ddl-auto": "create"}}'
+          guard_ok 'accepts names that only start like the schema-management families (control)' \
+            '{"config": {"SPRING_DATA_JPA_REPOSITORIES_BOOTSTRAP_MODE": "deferred", "SPRING_JPAX_NOTE": "x", "APP_HIBERNATE_STATS": "off", "HIBERNATES_NOTE": "x", "JAKARTA_MAIL_HOST": "smtp.example.test"}}'
+          guard_case_re 'config.JDK_JAVA_OPTIONS must not mention .*hibernate' \
+            '{"config": {"JDK_JAVA_OPTIONS": "-Dhibernate.hbm2ddl.auto=update"}}'
+          # unmatched_bracket_names_test.yaml: not applicable, only extraEnv can carry such a name and this chart has no extraEnv route
+          # validate-chart.sh must_fail and vendored_must_fail cases added since 6b6c317 (env -> config,
+          # additionalEnv -> extraEnv, jvmOptions -> javaToolOptions)
+          guard_render_re 'config.SPRING_MAIN_LAZY_INITIALIZATION is not allowed: a spring.main.\* property' --set-string config.SPRING_MAIN_LAZY_INITIALIZATION=true
+          guard_render_re 'config.SPRING_KAFKA_PROPERTIES_SASL_JAAS_CONFIG is not allowed: a Kafka SASL or JAAS setting' --set-string 'config.SPRING_KAFKA_PROPERTIES_SASL_JAAS_CONFIG=x.LoginModule required;'
+          guard_render_re 'config.SPRING_JPA_HIBERNATE_DDL_AUTO is not allowed: a schema-management setting' --set-string config.SPRING_JPA_HIBERNATE_DDL_AUTO=create-drop
+          guard_render_re 'config.SPRING_CONFIG_IMPORT_0_ is not allowed' --set-string config.SPRING_CONFIG_IMPORT_0_=optional:file:./x.yml
+          guard_render_re 'config.SPRING_MAIN_LAZYINITIALIZATION is not allowed: a spring.main.\* property' --set-string config.SPRING_MAIN_LAZYINITIALIZATION=true
+          guard_render_re 'config.spring.main.sources is not allowed: a spring.main.\* property' --set-string 'config.spring\.main\.sources=file:./beans.xml'
+          guard_render_re 'config.SPRING_JPA_GENERATE_DDL is not allowed: a schema-management setting' --set-string config.SPRING_JPA_GENERATE_DDL=true
+          guard_render_re 'config.SPRING_KAFKA_PROPERTIES_SASL_MECHANISM is not allowed: a Kafka SASL or JAAS setting' --set-string config.SPRING_KAFKA_PROPERTIES_SASL_MECHANISM=PLAIN
+          guard_render_re 'config.SPRING_KAFKA_PROPERTIES_SASLJAASCONFIG is not allowed: a Kafka SASL or JAAS setting' --set-string config.SPRING_KAFKA_PROPERTIES_SASLJAASCONFIG=x
           mutated() {
             python3 -c '
           import sys, yaml

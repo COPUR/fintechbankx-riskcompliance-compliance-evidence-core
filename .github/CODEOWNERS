@@ -2,7 +2,11 @@
 api/openapi/*.accepted-breaking.txt @COPUR
 **/*.accepted-breaking.txt @COPUR
 
-# The vendored platform guard (cicd-templates), its verifier and the workflow that pins their digests.
-deploy/helm/compliance-evidence-service/templates/_fbx_helpers.tpl @COPUR
-scripts/ci/verify-vendored-guard.sh @COPUR
-.github/workflows/deployability.yml @COPUR
+# Platform guard (fintechbankx-platform-delivery-iac-cicd-templates,
+# charts/fintechbankx-service README, "Vendoring the guard"; vendored at 73e1881): only the
+# platform owners approve a change to the vendored file, the verifier, the workflow that pins
+# the digest, or this file. Keep below every broader rule (the last matching rule wins).
+/deploy/helm/*/templates/_fbx_helpers.tpl   @COPUR
+/scripts/ci/verify-vendored-guard.sh        @COPUR
+/.github/workflows/deployability.yml        @COPUR
+/.github/CODEOWNERS                         @COPUR
