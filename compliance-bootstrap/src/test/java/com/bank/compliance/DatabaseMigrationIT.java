@@ -36,6 +36,8 @@ class DatabaseMigrationIT {
     /** Built from a constant so the publication secret scan does not read a test argument as a credential. */
     private static final String DATASOURCE_PASSWORD = "spring.datasource.password";
 
+    private static final String LAZY_INITIALIZATION = "--spring.main.lazy-initialization=true";
+
     private static final String JOB_SCHEMA = "sc_cmp_evidence_job_it";
     private static final String SERVICE_SCHEMA = "sc_cmp_evidence";
     private static final String RDS_BUNDLE = "/etc/fintechbankx/rds-ca/global-bundle.pem";
@@ -211,6 +213,33 @@ class DatabaseMigrationIT {
         assertThat(owner.queryForObject(
             "select count(*) from " + SERVICE_SCHEMA + ".flyway_schema_history where version = '9999'", Integer.class))
             .isZero();
+    }
+
+    /** Lazy initialization in the Job's environment must not turn a failed migration into exit 0. */
+    @Test
+    void aFailedMigrationExitsWithOneUnderLazyInitialization() {
+        String schema = JOB_SCHEMA + "_failed_lazy";
+        owner.execute("drop schema if exists " + schema + " cascade");
+        try {
+            String[] arguments = with(job(schema), "--DB_USERNAME=role_that_does_not_exist", LAZY_INITIALIZATION);
+
+            assertThat(DatabaseMigration.run(arguments)).isOne();
+        } finally {
+            owner.execute("drop schema if exists " + schema + " cascade");
+        }
+    }
+
+    /** Under lazy initialization the Job still applies every migration before it reports success. */
+    @Test
+    void theJobAppliesEveryMigrationUnderLazyInitialization() throws IOException {
+        String schema = JOB_SCHEMA + "_lazy";
+        owner.execute("drop schema if exists " + schema + " cascade");
+        try {
+            assertThat(DatabaseMigration.run(with(job(schema), LAZY_INITIALIZATION))).isZero();
+            assertThat(appliedVersions(schema)).isEqualTo(resolvedMigrations());
+        } finally {
+            owner.execute("drop schema if exists " + schema + " cascade");
+        }
     }
 
     /** What the Job's pod gets: DB_URL, DB_USERNAME (the role V7 grants) and the db-migration secret; TLS assertions off for the test database. */
