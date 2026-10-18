@@ -6,14 +6,18 @@ import com.bank.compliance.domain.NormalizedName;
 import com.bank.compliance.domain.ScreeningSourceUnavailableException;
 import com.bank.compliance.domain.port.out.CustomerProfilePort;
 import com.bank.compliance.infrastructure.web.CorrelationIdFilter;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.MDC;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 
+import java.io.IOException;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -29,15 +33,22 @@ import java.util.UUID;
  * carrying the caller's interaction id.
  *
  * Only a definite answer becomes a fact: 200 with a usable name and a known
- * kycStatus, or 404 (no such customer). A refusal (401/403), a server error,
- * a timeout or a response this adapter cannot read is a source outage; the
- * screening is refused rather than made on a guess. Messages never carry the
+ * kycStatus, or the customer context's own "no such customer" (404 whose
+ * ErrorResponse carries code CUSTOMER_NOT_FOUND). A bare 404 (a route, an
+ * ingress or mesh answer, a wrong base path), a refusal (401/403), a server
+ * error, a timeout or a response this adapter cannot read is a source outage;
+ * the screening is refused rather than made on a guess, and payments keep
+ * retrying instead of declining a real customer. Messages never carry the
  * customer id.
  */
 public class CustomerProfileHttpAdapter implements CustomerProfilePort {
 
+    /** The customer context's error code for an unknown customer (customer-context.yaml, ErrorResponse.code). */
+    static final String CUSTOMER_NOT_FOUND_CODE = "CUSTOMER_NOT_FOUND";
+
     private final RestClient http;
     private final ServiceTokenProvider tokens;
+    private final ObjectMapper json = new ObjectMapper();
 
     public CustomerProfileHttpAdapter(RestClient http, ServiceTokenProvider tokens) {
         this.http = Objects.requireNonNull(http, "http client is required");
@@ -56,17 +67,42 @@ public class CustomerProfileHttpAdapter implements CustomerProfilePort {
                     .retrieve()
                     .body(CustomerProfileDto.class);
         } catch (HttpClientErrorException.NotFound e) {
-            return Optional.empty();
+            if (isCustomerNotFound(e)) {
+                return Optional.empty();
+            }
+            throw new ScreeningSourceUnavailableException(
+                    "The customer profile service answered HTTP 404 without the customer's " + CUSTOMER_NOT_FOUND_CODE + " code");
         } catch (RestClientResponseException e) {
             throw new ScreeningSourceUnavailableException(
                     "The customer profile service answered HTTP " + e.getStatusCode().value());
         } catch (ResourceAccessException e) {
             throw new ScreeningSourceUnavailableException("The customer profile service is unreachable");
+        } catch (RestClientException e) {
+            // Another content type or malformed JSON: not a fact, and not a defect of ours (fail closed, 503 not 500).
+            throw new ScreeningSourceUnavailableException("The customer profile service answered with an unreadable profile");
         }
         if (dto == null) {
             throw new ScreeningSourceUnavailableException("The customer profile service answered with an empty profile");
         }
         return Optional.of(toProfile(customerId, dto));
+    }
+
+    /**
+     * True only for the customer context's own ErrorResponse: content type application/json
+     * (its contract pins that, not application/problem+json) whose code is CUSTOMER_NOT_FOUND.
+     * Anything else is not a statement about the customer.
+     */
+    private boolean isCustomerNotFound(HttpClientErrorException.NotFound e) {
+        MediaType contentType = e.getResponseHeaders() == null ? null : e.getResponseHeaders().getContentType();
+        if (contentType == null || !MediaType.APPLICATION_JSON.isCompatibleWith(contentType)) {
+            return false;
+        }
+        try {
+            JsonNode body = json.readTree(e.getResponseBodyAsByteArray());
+            return body != null && CUSTOMER_NOT_FOUND_CODE.equals(body.path("code").asText(null));
+        } catch (IOException unreadable) {
+            return false;
+        }
     }
 
     private static CustomerProfile toProfile(String customerId, CustomerProfileDto dto) {

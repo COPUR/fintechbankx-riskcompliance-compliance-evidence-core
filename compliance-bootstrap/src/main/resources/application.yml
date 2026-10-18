@@ -130,13 +130,19 @@ fintechbankx:
 compliance:
   # POST /api/v1/compliance/screen (caller-attested facts) is deprecated and
   # served only while this is true; otherwise it answers 410 and names v2.
-  # Reading results (GET) does not depend on it.
+  # The shipped default is true so a deploy does not break payments while it
+  # is still on v1; the cut-over sets it to false once payments is on v2
+  # (runbook step 2b). Reading results (GET) does not depend on it.
   v1-caller-facts:
-    enabled: ${COMPLIANCE_V1_CALLER_FACTS_ENABLED:false}
+    enabled: ${COMPLIANCE_V1_CALLER_FACTS_ENABLED:true}
   # A screening is refused (503 SCREENING_SOURCE_UNAVAILABLE) while a list is
-  # empty or any of its sources was loaded longer ago than this. Sanctions
-  # lists change daily; PEP registers monthly, with a few days' slack.
+  # empty, lacks one of its required sources (comma-separated list_source
+  # names as the loader records them), or any of its sources was loaded longer
+  # ago than the maximum age. Sanctions lists change daily; PEP registers
+  # monthly, with a few days' slack.
   lists:
+    sanctions-required-sources: ${COMPLIANCE_SANCTIONS_REQUIRED_SOURCES:UN,OFAC-SDN,UAE-LOCAL}
+    pep-required-sources: ${COMPLIANCE_PEP_REQUIRED_SOURCES:UAE-PEP}
     sanctions-max-age: ${COMPLIANCE_LIST_MAX_AGE_SANCTIONS:P1D}
     pep-max-age: ${COMPLIANCE_LIST_MAX_AGE_PEP:P35D}
   # The customer context (svc-cus-profile-kyc): name and KYC status for a

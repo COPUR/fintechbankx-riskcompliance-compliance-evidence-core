@@ -4,6 +4,7 @@ import com.bank.compliance.domain.ScreeningSourceUnavailableException;
 import org.springframework.http.MediaType;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 
 import java.net.URLEncoder;
@@ -81,6 +82,9 @@ public class ClientCredentialsTokenProvider implements ServiceTokenProvider {
                     "The identity provider answered HTTP " + e.getStatusCode().value() + " to the token request");
         } catch (ResourceAccessException e) {
             throw new ScreeningSourceUnavailableException("The identity provider is unreachable");
+        } catch (RestClientException e) {
+            // Another content type or malformed JSON from the token endpoint: fail closed as a 503, not a 500.
+            throw new ScreeningSourceUnavailableException("The identity provider answered an unreadable token response");
         }
     }
 

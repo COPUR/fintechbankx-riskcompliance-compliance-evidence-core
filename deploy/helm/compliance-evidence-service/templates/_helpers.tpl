@@ -122,11 +122,43 @@ data is the runtime credential, extraData the schema owner's (db-migration).
 {{- $es := .Values.externalSecret -}}
 {{- $runtime := toString (default "" $es.remoteSecretName) -}}
 {{- $migration := toString (default "" $es.migrationSecretName) -}}
+{{- $oidc := toString (default "" $es.oidcClientSecretName) -}}
 {{- toJson (dict
       "data" (list (dict "secretKey" "SPRING_DATASOURCE_PASSWORD" "property" "password" "remoteSecretName" $runtime))
       "extraData" (list
         (dict "secretKey" "DB_MIGRATION_USERNAME" "property" "username" "remoteSecretName" $migration)
-        (dict "secretKey" "DB_MIGRATION_PASSWORD" "property" "password" "remoteSecretName" $migration))) -}}
+        (dict "secretKey" "DB_MIGRATION_PASSWORD" "property" "password" "remoteSecretName" $migration))
+      "oidcData" (list
+        (dict "secretKey" "SVC_CLIENT_SECRET" "property" "client_secret" "remoteSecretName" $oidc))) -}}
+{{- end -}}
+
+{{- define "compliance.oidcSecretName" -}}
+{{ include "compliance.name" . }}-oidc-client
+{{- end -}}
+
+{{/*
+externalSecret.oidcClientSecretName: the Secrets Manager entry
+<env>/<service account>/oidc-client (platform CLIENT_SECRET_DELIVERY: a JSON
+object with client_id, client_secret, issuer_uri and token_uri) the third
+ExternalSecret (externalsecret.yaml) reads the property client_secret from into
+the Secret <service account>-oidc-client, key SVC_CLIENT_SECRET. Required: the
+app pods load that Secret with envFrom and would otherwise refuse every v2
+screening. It must not be either database entry: the client credential and the
+database credentials are separate secrets with separate rotations (the runbook,
+"Rotating the client credential"). Names are compared trimmed and without a
+trailing "/". Control characters are refused by fbx.guard, which sees the entry
+as externalSecret extraData (compliance.guard).
+*/}}
+{{- define "compliance.oidcClientSecretName" -}}
+{{- $name := toString (default "" .Values.externalSecret.oidcClientSecretName) -}}
+{{- $_ := required "externalSecret.oidcClientSecretName is required: the Secrets Manager entry <env>/<service account>/oidc-client whose client_secret becomes SVC_CLIENT_SECRET" $name -}}
+{{- $oidc := trimSuffix "/" (trim $name) -}}
+{{- $runtime := trimSuffix "/" (trim (toString (default "" .Values.externalSecret.remoteSecretName))) -}}
+{{- $migration := trimSuffix "/" (trim (toString (default "" .Values.externalSecret.migrationSecretName))) -}}
+{{- if or (eq $oidc $runtime) (eq $oidc $migration) -}}
+{{- fail "externalSecret.oidcClientSecretName must not be the runtime or migration database secret: the client credential is its own Secrets Manager entry (<env>/<service account>/oidc-client)" -}}
+{{- end -}}
+{{- $name -}}
 {{- end -}}
 
 {{/*
@@ -144,8 +176,9 @@ adapter. Every route of this chart into a container's environment is mapped:
     compliance.databaseCaMount): mountPath /etc/fintechbankx/rds-ca, key
     global-bundle.pem, configMapName rds-ca-bundle;
   - kafka.runtime: the only Spring profile (fbx.kafkaProfile, configmap.yaml);
-  - externalSecret.data / extraData: the runtime and db-migration secret keys
-    and remote names (compliance.externalSecretData).
+  - externalSecret.data / extraData: the runtime, db-migration and oidc-client
+    secret keys and remote names (compliance.externalSecretData; the
+    oidc-client entry is passed to the guard as extraData).
 The chart has no extraEnv, envFrom, extraEnvFrom, javaToolOptions or
 ExternalSecret dataFrom value, so the adapter passes none (CI fails if
 values.yaml gains an env list). The chart's own rules follow the guard:
@@ -161,7 +194,7 @@ compliance.validateKafkaRuntime (strimzi needs kafkaClientTls).
         "configMapName" .Values.databaseCa.configMapName)
       "kafka" (dict "runtime" (.Values.kafka | default dict).runtime)
       "externalSecret" (dict "enabled" .Values.externalSecret.enabled
-        "data" $secrets.data "extraData" $secrets.extraData))) -}}
+        "data" $secrets.data "extraData" (concat $secrets.extraData $secrets.oidcData)))) -}}
 {{- include "compliance.validateDatabaseTls" . -}}
 {{- include "compliance.validateEnvValues" . -}}
 {{- include "compliance.validateKafkaRuntime" . -}}
@@ -238,13 +271,13 @@ Takes a dict: key (the config key) and value (its value).
 {{- else if regexMatch "^FINTECHBANKXTLS" $name -}}
 {{- printf "config.%s must not be set: fintechbankx.tls.enforce is the test switch of the TLS startup assertions, which are on by default; only the local profile and tests turn them off, never a cluster" $key -}}
 {{- else if or (eq $name "SVCCLIENTSECRET") (regexMatch "^COMPLIANCEIDENTITYCLIENTSECRET" $name) -}}
-{{- printf "config.%s must not be set: the client credential is read from the Secret identity.clientSecret (SVC_CLIENT_SECRET through valueFrom.secretKeyRef), never from a ConfigMap" $key -}}
+{{- printf "config.%s must not be set: the client credential is read from the oidc-client ExternalSecret (SVC_CLIENT_SECRET, externalSecret.oidcClientSecretName), never from a ConfigMap" $key -}}
 {{- else if regexMatch "^COMPLIANCEIDENTITY" $name -}}
-{{- printf "config.%s must not be set: set the identity through OIDC_TOKEN_URI, SVC_CLIENT_ID and identity.clientSecret, whose values the chart checks" $key -}}
+{{- printf "config.%s must not be set: set the identity through OIDC_TOKEN_URI, SVC_CLIENT_ID and externalSecret.oidcClientSecretName, whose values the chart checks" $key -}}
 {{- else if regexMatch "^COMPLIANCECUSTOMER" $name -}}
 {{- printf "config.%s must not be set: set the customer context through CUSTOMER_SERVICE_URL, whose value the chart checks" $key -}}
 {{- else if regexMatch "^COMPLIANCELISTS" $name -}}
-{{- printf "config.%s must not be set: set the list ages through COMPLIANCE_LIST_MAX_AGE_SANCTIONS and COMPLIANCE_LIST_MAX_AGE_PEP, whose values the chart checks" $key -}}
+{{- printf "config.%s must not be set: set the lists through COMPLIANCE_LIST_MAX_AGE_SANCTIONS, COMPLIANCE_LIST_MAX_AGE_PEP, COMPLIANCE_SANCTIONS_REQUIRED_SOURCES and COMPLIANCE_PEP_REQUIRED_SOURCES, whose values the chart checks" $key -}}
 {{- end -}}
 {{- end -}}
 
@@ -256,7 +289,8 @@ screening. The screening keys (decision 0003) come after the platform ones.
 {{- define "compliance.requiredConfig" -}}
 {{- toJson (list "DB_URL" "KAFKA_BOOTSTRAP_SERVERS" "OIDC_ISSUER_URI" "OIDC_JWK_SET_URI" "OIDC_AUDIENCE"
       "CUSTOMER_SERVICE_URL" "OIDC_TOKEN_URI" "SVC_CLIENT_ID" "COMPLIANCE_V1_CALLER_FACTS_ENABLED"
-      "COMPLIANCE_LIST_MAX_AGE_SANCTIONS" "COMPLIANCE_LIST_MAX_AGE_PEP") -}}
+      "COMPLIANCE_LIST_MAX_AGE_SANCTIONS" "COMPLIANCE_LIST_MAX_AGE_PEP"
+      "COMPLIANCE_SANCTIONS_REQUIRED_SOURCES" "COMPLIANCE_PEP_REQUIRED_SOURCES") -}}
 {{- end -}}
 
 {{/*
@@ -264,8 +298,13 @@ Values of the screening settings (decision 0003). The flag must be exactly
 "true" or "false" (Spring would read "yes" as a binding error at startup, after
 the rollout began); the list ages are ISO-8601 durations with at least one
 component (Duration.parse; "1d" or "24h" would stop the service at startup);
+the required sources are comma-separated list-source names as the loader
+accepts them (letters, digits, . _ -; no blank entry, no space: Spring splits
+the value on commas and ListFreshnessPolicy refuses a blank name at startup);
 the token endpoint is https (the client credential travels in the request
-body); the customer URL is an absolute http(s) URL without white space.
+body); the customer URL is an absolute http(s) URL without white space; the
+client credential's Secrets Manager entry is set and separate from the
+database ones (compliance.oidcClientSecretName).
 */}}
 {{- define "compliance.validateScreeningConfig" -}}
 {{- $flag := toString (default "" (index .Values.config "COMPLIANCE_V1_CALLER_FACTS_ENABLED")) -}}
@@ -278,6 +317,12 @@ body); the customer URL is an absolute http(s) URL without white space.
 {{- fail (printf "config.%s must be an ISO-8601 duration such as P1D, PT12H or P35D (days, hours, minutes, seconds)" $key) -}}
 {{- end -}}
 {{- end -}}
+{{- range $key := list "COMPLIANCE_SANCTIONS_REQUIRED_SOURCES" "COMPLIANCE_PEP_REQUIRED_SOURCES" -}}
+{{- $sources := toString (default "" (index $.Values.config $key)) -}}
+{{- if and $sources (not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._-]*(,[A-Za-z0-9][A-Za-z0-9._-]*)*$" $sources)) -}}
+{{- fail (printf "config.%s must be a comma-separated list of list sources (letters, digits, . _ -; no spaces or empty entries), such as UN,OFAC-SDN,UAE-LOCAL" $key) -}}
+{{- end -}}
+{{- end -}}
 {{- $token := toString (default "" (index .Values.config "OIDC_TOKEN_URI")) -}}
 {{- if and $token (not (regexMatch "^https://[^[:space:]]+$" $token)) -}}
 {{- fail "config.OIDC_TOKEN_URI must be an https:// URL: the client credential travels in the token request body" -}}
@@ -286,40 +331,7 @@ body); the customer URL is an absolute http(s) URL without white space.
 {{- if and $customer (not (regexMatch "^https?://[^[:space:]]+$" $customer)) -}}
 {{- fail "config.CUSTOMER_SERVICE_URL must be an absolute http:// or https:// URL of the customer context" -}}
 {{- end -}}
-{{- include "compliance.validateIdentitySecret" . -}}
-{{- end -}}
-
-{{/*
-identity.clientSecret names the existing Secret (platform-synced) and key the
-app pods read SVC_CLIENT_SECRET from. Both are required; the name is a
-DNS-1123 subdomain and the key a Secret data key, so a newline or space cannot
-reach the manifest.
-*/}}
-{{- define "compliance.identitySecretName" -}}
-{{- $identity := .Values.identity | default dict -}}
-{{- $secret := $identity.clientSecret | default dict -}}
-{{- $name := toString (default "" $secret.secretName) -}}
-{{- $_ := required "identity.clientSecret.secretName is required: the Kubernetes Secret holding this service's client credential (SVC_CLIENT_SECRET), synced by platform" $name -}}
-{{- if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" $name) -}}
-{{- fail "identity.clientSecret.secretName must be a DNS-1123 name" -}}
-{{- end -}}
-{{- $name -}}
-{{- end -}}
-
-{{- define "compliance.identitySecretKey" -}}
-{{- $identity := .Values.identity | default dict -}}
-{{- $secret := $identity.clientSecret | default dict -}}
-{{- $key := toString (default "" $secret.key) -}}
-{{- $_ := required "identity.clientSecret.key is required: the key of the client credential in identity.clientSecret.secretName" $key -}}
-{{- if not (regexMatch "^[-._a-zA-Z0-9]+$" $key) -}}
-{{- fail "identity.clientSecret.key must be a Secret key ([-._a-zA-Z0-9]+)" -}}
-{{- end -}}
-{{- $key -}}
-{{- end -}}
-
-{{- define "compliance.validateIdentitySecret" -}}
-{{- $_ := include "compliance.identitySecretName" . -}}
-{{- $_ = include "compliance.identitySecretKey" . -}}
+{{- $_ := include "compliance.oidcClientSecretName" . -}}
 {{- end -}}
 
 {{- define "compliance.validateDatabaseTls" -}}

@@ -17,6 +17,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Clock;
 import java.time.Duration;
+import java.util.List;
 
 @Configuration
 public class ComplianceConfiguration {
@@ -27,13 +28,17 @@ public class ComplianceConfiguration {
     }
 
     /**
-     * How old a list load may be before screening against it is refused
-     * (COMPLIANCE_LIST_MAX_AGE_SANCTIONS, default P1D; COMPLIANCE_LIST_MAX_AGE_PEP, default P35D).
+     * Which sources every screening must find loaded (COMPLIANCE_SANCTIONS_REQUIRED_SOURCES,
+     * COMPLIANCE_PEP_REQUIRED_SOURCES; comma-separated list_source names) and how old a load may be
+     * before screening against it is refused (COMPLIANCE_LIST_MAX_AGE_SANCTIONS, default P1D;
+     * COMPLIANCE_LIST_MAX_AGE_PEP, default P35D). A missing required source is a 503, hit or no hit.
      */
     @Bean
     ListFreshnessPolicy listFreshnessPolicy(@Value("${compliance.lists.sanctions-max-age}") Duration sanctionsMaxAge,
-                                            @Value("${compliance.lists.pep-max-age}") Duration pepMaxAge) {
-        return new ListFreshnessPolicy(sanctionsMaxAge, pepMaxAge);
+                                            @Value("${compliance.lists.pep-max-age}") Duration pepMaxAge,
+                                            @Value("${compliance.lists.sanctions-required-sources}") List<String> requiredSanctionsSources,
+                                            @Value("${compliance.lists.pep-required-sources}") List<String> requiredPepSources) {
+        return new ListFreshnessPolicy(sanctionsMaxAge, pepMaxAge, requiredSanctionsSources, requiredPepSources);
     }
 
     /** The clock the freshness check reads; UTC like the loaded_at it is compared with. */

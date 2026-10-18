@@ -85,26 +85,22 @@ config:
   # The realm's token endpoint for the client-credentials grant; https only, the credential travels in
   # the request body. Example: https://<idp>/realms/fintechbankx/protocol/openid-connect/token
   OIDC_TOKEN_URI: ""
-  # This service's client id (token azp); its credential is identity.clientSecret below, never a config key.
+  # This service's client id (token azp). Its credential (SVC_CLIENT_SECRET) is never a config key: the
+  # app pods read it from the oidc-client ExternalSecret (externalSecret.oidcClientSecretName below).
   SVC_CLIENT_ID: svc-cmp-evidence
-  # Deprecated POST /api/v1/compliance/screen (caller-attested facts): served only with "true"; "false"
-  # answers 410 and names /api/v2/compliance/screen. Exactly "true" or "false".
-  COMPLIANCE_V1_CALLER_FACTS_ENABLED: "false"
+  # Deprecated POST /api/v1/compliance/screen (caller-attested facts): "true" (the default) keeps serving
+  # it while payments still calls v1; "false" answers 410 and names /api/v2/compliance/screen. Set it to
+  # "false" only after payments has moved to v2 (runbook, cut-over step). Exactly "true" or "false".
+  COMPLIANCE_V1_CALLER_FACTS_ENABLED: "true"
   # A screening is refused (503 SCREENING_SOURCE_UNAVAILABLE) while a list is empty or a source was loaded
   # longer ago than this. ISO-8601 durations (P1D, PT12H, P35D).
   COMPLIANCE_LIST_MAX_AGE_SANCTIONS: P1D
   COMPLIANCE_LIST_MAX_AGE_PEP: P35D
-
-# The client credential of svc-cmp-evidence (SVC_CLIENT_SECRET), read by the app pods from an existing
-# Kubernetes Secret in the namespace through valueFrom.secretKeyRef, like the Strimzi client certificate
-# (kafkaClientTls). The chart ships no ExternalSecret or SecretStore for it (platform rule): platform
-# syncs the Secret from Secrets Manager <env>/compliance-evidence-service/svc-client. The reference is
-# not optional, so a pod without the credential does not start instead of refusing every v2 screening.
-# The migration Job never mounts it.
-identity:
-  clientSecret:
-    secretName: compliance-evidence-service-svc-client
-    key: client-secret
+  # The list sources (loader argument list-source) every screening must find loaded and fresh; a missing
+  # or stale required source is a 503, hit or no hit. Comma-separated names of letters, digits, . _ -
+  # with no spaces. Group Compliance confirms the set before cut-over (runbook section 3a).
+  COMPLIANCE_SANCTIONS_REQUIRED_SOURCES: UN,OFAC-SDN,UAE-LOCAL
+  COMPLIANCE_PEP_REQUIRED_SOURCES: UAE-PEP
 
 # The only Spring profile the chart renders (SPRING_PROFILES_ACTIVE in the ConfigMap):
 #   msk     -> kafka-msk: Amazon MSK IAM over SASL_SSL (application.yml), the default;
@@ -130,7 +126,8 @@ databaseCa:
   key: global-bundle.pem
   mountPath: /etc/fintechbankx/rds-ca
 
-# Database credential, synced from AWS Secrets Manager by External Secrets Operator.
+# Credentials synced from AWS Secrets Manager by External Secrets Operator: the runtime database
+# role, the schema owner (migration Job only) and this service's OIDC client (app pods only).
 externalSecret:
   enabled: true
   secretStoreRef:
@@ -143,6 +140,14 @@ externalSecret:
   # {"username","password"}, read only by the migration Job below. The service
   # pods never mount it.
   migrationSecretName: ""
+  # Required. Secrets Manager secret <env>/compliance-evidence-service/oidc-client, published by the
+  # platform identity repo (publish-oidc-client-secrets.sh) as a JSON object with client_id,
+  # client_secret, issuer_uri and token_uri. The chart's third ExternalSecret reads the property
+  # client_secret into the Kubernetes Secret <serviceAccount.name>-oidc-client, key SVC_CLIENT_SECRET,
+  # which only the app pods load (envFrom); the migration Job never does. The reference is not
+  # optional, so a pod without the credential does not start instead of refusing every v2 screening.
+  # Rotation: runbook, "Rotating the client credential".
+  oidcClientSecretName: ""
   refreshInterval: 1h
 
 topologySpread:

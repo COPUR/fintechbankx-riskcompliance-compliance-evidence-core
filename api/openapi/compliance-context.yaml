@@ -27,11 +27,20 @@ paths:
 
         A fact that cannot be resolved is a 503 SCREENING_SOURCE_UNAVAILABLE
         and nothing is recorded: the customer context unreachable, refusing or
-        failing, a list empty, or a list source loaded longer ago than
+        failing, a list empty or missing one of its required sources
+        (COMPLIANCE_SANCTIONS_REQUIRED_SOURCES, COMPLIANCE_PEP_REQUIRED_SOURCES),
+        or a list source loaded longer ago than
         COMPLIANCE_LIST_MAX_AGE_SANCTIONS (default P1D) or
         COMPLIANCE_LIST_MAX_AGE_PEP (default P35D). The screening never passes
         by default; retry later. A customer the customer context does not know
         is a 422 CUSTOMER_NOT_FOUND (a definite answer; do not retry).
+
+        Known limitation (Proposed, to confirm by Group Compliance before
+        cut-over; not a compliance claim): the match is an exact comparison of
+        the normalised first and last name (upper case, letters and digits,
+        single spaces) in FIRST LAST order. A list entry written "LAST, FIRST",
+        a middle name on one side only, an alias or another transliteration
+        is not matched.
 
         A replay (same transactionId, customer, amount by value, currency and
         requester) returns the stored result without consulting any source
@@ -109,7 +118,8 @@ paths:
           description: >-
             SCREENING_SOURCE_UNAVAILABLE: a fact could not be resolved (the
             customer context unreachable, refusing or failing; the sanctions
-            list or PEP register empty or stale; no service credential).
+            list or PEP register empty, missing a required source or stale;
+            no service credential).
             Nothing is recorded; never a PASS by default. Retry later. The
             message names the source only.
           content:
@@ -125,10 +135,12 @@ paths:
       description: |-
         Deprecated: the caller states the sanctions, PEP and KYC facts itself.
         Use POST /api/v2/compliance/screen, where compliance computes them.
-        This operation is served only while the service runs with
-        COMPLIANCE_V1_CALLER_FACTS_ENABLED=true; otherwise (the default) it
-        answers 410 ENDPOINT_GONE and names /api/v2/compliance/screen. The
-        sunset date is Proposed; payments' move to v2 sets the real one.
+        This operation is served while the service runs with
+        COMPLIANCE_V1_CALLER_FACTS_ENABLED=true (the default until payments has
+        moved to v2); with "false" it answers 410 ENDPOINT_GONE and names
+        /api/v2/compliance/screen. The sunset date is Proposed (Group
+        Compliance and payments to confirm before cut-over); payments' move to
+        v2 sets the real one.
 
         Screens once per transactionId and stores the decision with the facts it
         was made on (amount, currency, sanctions/KYC/PEP flags, rule set
@@ -192,8 +204,9 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '410':
           description: >-
-            ENDPOINT_GONE: the service runs with COMPLIANCE_V1_CALLER_FACTS_ENABLED
-            off (the default). Use POST /api/v2/compliance/screen.
+            ENDPOINT_GONE: the service runs with
+            COMPLIANCE_V1_CALLER_FACTS_ENABLED=false (set after payments moved
+            to v2). Use POST /api/v2/compliance/screen.
           content:
             application/json:
               schema:

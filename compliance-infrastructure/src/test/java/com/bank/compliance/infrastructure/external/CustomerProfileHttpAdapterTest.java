@@ -96,10 +96,12 @@ class CustomerProfileHttpAdapterTest {
         assertThat(adapter.findCustomer("C-404")).isEmpty();
         server.verify();
 
+        // The customer contract pins application/json (ErrorResponse), not problem+json: another type is not its answer.
         server.reset();
         server.expect(requestTo(BASE + "/api/v1/customers/C-404/screening-profile")).andRespond(withResourceNotFound()
                 .contentType(MediaType.APPLICATION_PROBLEM_JSON).body("{\"code\":\"CUSTOMER_NOT_FOUND\",\"title\":\"Not Found\"}"));
-        assertThat(adapter.findCustomer("C-404")).isEmpty();
+        assertThatThrownBy(() -> adapter.findCustomer("C-404")).isInstanceOf(ScreeningSourceUnavailableException.class)
+                .hasMessage("The customer profile service answered HTTP 404 without the customer's CUSTOMER_NOT_FOUND code");
     }
 
     /** A route, ingress or mesh 404 is not a statement about the customer: payments must keep retrying, not decline. */

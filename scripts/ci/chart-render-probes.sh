@@ -443,12 +443,13 @@ for key in COMPLIANCE_LIST_MAX_AGE_SANCTIONS COMPLIANCE_LIST_MAX_AGE_PEP; do
   render_ok --set-string "config.$key=PT12H"
   render_ok --set-string "config.$key=P35D"
 done
+# (helm splits --set values on a comma; "\," keeps the comma in the value.)
 for key in COMPLIANCE_SANCTIONS_REQUIRED_SOURCES COMPLIANCE_PEP_REQUIRED_SOURCES; do
   for bad in "UN, OFAC" "UN,,OFAC" ",UN" "UN," "UN;OFAC" "-UN" "UN OFAC"; do
-    reject_render "config.$key must be a comma-separated list of list sources" --set-string "config.$key=$bad"
+    reject_render "config.$key must be a comma-separated list of list sources" --set-string "config.$key=${bad//,/\\,}"
   done
   render_ok --set-string "config.$key=UN"
-  render_ok --set-string "config.$key=UN,OFAC-SDN,UAE-LOCAL"
+  render_ok --set-string "config.$key=UN\,OFAC-SDN\,UAE-LOCAL"
 done
 reject_render 'config.OIDC_TOKEN_URI must be an https:// URL' --set-string config.OIDC_TOKEN_URI=http://ci/realms/fintechbankx/protocol/openid-connect/token
 reject_render 'config.OIDC_TOKEN_URI must be an https:// URL' --set-string config.OIDC_TOKEN_URI=ci/token

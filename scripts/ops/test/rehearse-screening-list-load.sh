@@ -93,9 +93,9 @@ printf 'display_name\nTest OFAC Dummy\n"Test Second, Dummy"\n' > "$work/ofac.csv
 check "both sources present" \
   "SELECT list_source || '=' || count(*) FROM $schema.sanctions_list_entry GROUP BY list_source ORDER BY list_source" "$(printf 'OFAC-SDN=2\nUN=%s' "$fixture_rows")"
 
-echo "--- reloading a source replaces it as a whole"
+echo "--- reloading a source replaces it as a whole (1 row for 8: a shrink the operator confirms with --allow-shrink)"
 printf 'display_name\nTest Replaced Person\n' > "$work/un2.csv"
-"$loader" "$conn" sanctions "$work/un2.csv" UN 2026-10-18
+"$loader" --allow-shrink "$conn" sanctions "$work/un2.csv" UN 2026-10-18
 check "the old UN rows are gone and the new version is recorded" \
   "SELECT count(*) || ' ' || min(list_version) || ' ' || min(normalized_name) FROM $schema.sanctions_list_entry WHERE list_source = 'UN'" "1 2026-10-18 TEST REPLACED PERSON"
 check "OFAC untouched by the UN reload" \
