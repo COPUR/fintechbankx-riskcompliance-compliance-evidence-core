@@ -17,7 +17,8 @@ paths:
         Screens once per transactionId. The caller sends the transaction and
         customer ids, the amount and the currency only; compliance resolves the
         facts itself: the customer's name and KYC status from the customer
-        context (svc-cus-profile-kyc, GET /api/v1/customers/{id}), the sanctions
+        context (svc-cus-profile-kyc, GET /api/v1/customers/{id}/screening-profile,
+        which carries only those fields), the sanctions
         and PEP flags by matching the customer's normalised full name against
         the compliance-owned sanctions list and PEP register. The decision, the
         facts, the rule set version, the requester and the list loads the facts

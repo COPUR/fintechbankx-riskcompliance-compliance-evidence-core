@@ -20,10 +20,13 @@ import java.util.UUID;
 
 /**
  * Reads a customer's name and KYC status from the customer context
- * (svc-cus-profile-kyc) through GET /api/v1/customers/{id} of its published
- * contract, authenticated with this service's own client-credentials token
- * (the customer context lists svc-cmp-evidence on SERVICE_CALLERS_PROFILE and
- * requires aud svc-cus-profile-kyc) and carrying the caller's interaction id.
+ * (svc-cus-profile-kyc) through GET /api/v1/customers/{id}/screening-profile
+ * of its published contract: the screening profile carries exactly
+ * customerId, firstName, lastName and kycStatus, so compliance never reads
+ * the full profile (DevSecOps review). Authenticated with this service's own
+ * client-credentials token (the customer context lists svc-cmp-evidence on
+ * SERVICE_CALLERS_SCREENING and requires aud svc-cus-profile-kyc) and
+ * carrying the caller's interaction id.
  *
  * Only a definite answer becomes a fact: 200 with a usable name and a known
  * kycStatus, or 404 (no such customer). A refusal (401/403), a server error,
@@ -46,7 +49,7 @@ public class CustomerProfileHttpAdapter implements CustomerProfilePort {
         String bearer = tokens.bearerToken();
         CustomerProfileDto dto;
         try {
-            dto = http.get().uri("/api/v1/customers/{id}", customerId)
+            dto = http.get().uri("/api/v1/customers/{id}/screening-profile", customerId)
                     .accept(MediaType.APPLICATION_JSON)
                     .header(HttpHeaders.AUTHORIZATION, "Bearer " + bearer)
                     .header(CorrelationIdFilter.HEADER, interactionId())

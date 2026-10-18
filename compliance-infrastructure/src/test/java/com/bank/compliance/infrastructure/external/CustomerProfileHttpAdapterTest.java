@@ -108,7 +108,7 @@ class CustomerProfileHttpAdapterTest {
 
     @Test
     void aRefusedTokenIsASourceOutageNotANotFound() {
-        // 401/403: this service's client is not entitled yet (aud svc-cus-profile-kyc, SERVICE_CALLERS_PROFILE); never read as "no customer".
+        // 401/403: this service's client is not entitled yet (aud svc-cus-profile-kyc, SERVICE_CALLERS_SCREENING); never read as "no customer".
         server.expect(requestTo(BASE + "/api/v1/customers/C-1/screening-profile")).andRespond(withStatus(HttpStatus.FORBIDDEN));
 
         assertThatThrownBy(() -> adapter.findCustomer("C-1"))
@@ -137,7 +137,7 @@ class CustomerProfileHttpAdapterTest {
         // A profile without kycStatus (an older customer release).
         server.reset();
         server.expect(requestTo(BASE + "/api/v1/customers/C-1/screening-profile"))
-                .andRespond(withSuccess(PROFILE.replace("\"kycStatus\":\"VERIFIED\",", ""), MediaType.APPLICATION_JSON));
+                .andRespond(withSuccess(PROFILE.replace(",\"kycStatus\":\"VERIFIED\"", ""), MediaType.APPLICATION_JSON));
         assertThatThrownBy(() -> adapter.findCustomer("C-1"))
                 .isInstanceOf(ScreeningSourceUnavailableException.class)
                 .hasMessage("The customer profile service answered with an unknown KYC status");

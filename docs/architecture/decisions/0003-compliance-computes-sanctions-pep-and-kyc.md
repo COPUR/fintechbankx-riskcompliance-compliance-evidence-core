@@ -24,9 +24,11 @@ to compliance.
    carries `sanctionsHit`, `kycVerified` or `pep` is a 400: the caller is on
    the retired contract and must not think its flag was used.
 2. **Compliance resolves the facts at screening time.**
-   - Name and KYC status: `GET /api/v1/customers/{id}` of the customer
-     context, through the out-port `CustomerProfilePort` and the HTTP adapter
-     `CustomerProfileHttpAdapter`. `kycVerified` is true exactly when the
+   - Name and KYC status: `GET /api/v1/customers/{id}/screening-profile` of
+     the customer context, which returns exactly `customerId`, `firstName`,
+     `lastName` and `kycStatus` (after the DevSecOps review compliance must
+     not read the full profile), through the out-port `CustomerProfilePort`
+     and the HTTP adapter `CustomerProfileHttpAdapter`. `kycVerified` is true exactly when the
      customer context says `VERIFIED`; `PENDING` and `REJECTED` are not
      verified; any other value, or no `kycStatus`, is contract drift and a
      source outage, never a fact.
@@ -42,7 +44,7 @@ to compliance.
      `SVC_CLIENT_ID`, `SVC_CLIENT_SECRET`, `OIDC_TOKEN_URI`) and caches it
      until shortly before it expires. The customer context requires `aud`
      `svc-cus-profile-kyc` on that token and lists `svc-cmp-evidence` on
-     `SERVICE_CALLERS_PROFILE`; both are the Keycloak client's and the
+     `SERVICE_CALLERS_SCREENING`; both are the Keycloak client's and the
      customer squad's configuration, not this service's code.
 3. **A fact that cannot be resolved stops the screening.** The customer
    context unreachable, refusing (401/403) or failing (5xx), a list empty, or
@@ -102,9 +104,9 @@ to compliance.
 
 ## Follow-ups
 
-- Customer squad: `kycStatus` on `GET /api/v1/customers/{id}` and
-  `svc-cmp-evidence` on `SERVICE_CALLERS_PROFILE` (the customer PR is being
-  extended to match; Proposed until merged).
+- Customer squad: `GET /api/v1/customers/{id}/screening-profile` and
+  `svc-cmp-evidence` on `SERVICE_CALLERS_SCREENING` (the customer patch
+  follows this one and must be deployed first; Proposed until merged).
 - Platform: Keycloak client `svc-cmp-evidence` with the client-credentials
   grant and an audience mapper for `svc-cus-profile-kyc`; the secret in
   Secrets Manager and the chart's ExternalSecret (`SVC_CLIENT_SECRET`), and

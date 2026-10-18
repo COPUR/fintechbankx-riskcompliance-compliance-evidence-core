@@ -7,8 +7,9 @@ import java.util.Optional;
 
 /**
  * Reads a customer's name and KYC status from the customer context
- * (svc-cus-profile-kyc) through its published API. An anti-corruption port:
- * the adapter translates the customer contract into {@link CustomerProfile}.
+ * (svc-cus-profile-kyc) through its published screening profile, never the
+ * full profile. An anti-corruption port: the adapter translates the customer
+ * contract into {@link CustomerProfile}.
  */
 public interface CustomerProfilePort {
 
