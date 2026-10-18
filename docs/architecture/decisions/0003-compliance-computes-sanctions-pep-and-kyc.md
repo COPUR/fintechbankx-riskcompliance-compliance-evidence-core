@@ -86,6 +86,13 @@ to compliance.
    checked by `NormalizedNameTest` and by the CI rehearsal
    `scripts/ops/test/rehearse-screening-list-load.sh`.
 
+## To confirm before cut-over (Group Compliance)
+
+- The v1 sunset date (`x-sunset` 2027-06-30 in the OpenAPI contract is Proposed).
+- Exact name matching on the shared normalisation for the first step, or a
+  vendor or fuzzy screening adapter behind `NameScreeningPort` before cut-over.
+- The list maximum ages (sanctions P1D, PEP P35D).
+
 ## Consequences
 
 - A `COMPUTED` decision proves what compliance looked up, against which list
@@ -108,10 +115,14 @@ to compliance.
   `svc-cmp-evidence` on `SERVICE_CALLERS_SCREENING` (the customer patch
   follows this one and must be deployed first; Proposed until merged).
 - Platform: Keycloak client `svc-cmp-evidence` with the client-credentials
-  grant and an audience mapper for `svc-cus-profile-kyc`; the secret in
-  Secrets Manager and the chart's ExternalSecret (`SVC_CLIENT_SECRET`), and
-  the chart config keys `CUSTOMER_SERVICE_URL`, `OIDC_TOKEN_URI`,
-  `COMPLIANCE_V1_CALLER_FACTS_ENABLED`, `COMPLIANCE_LIST_MAX_AGE_*`.
+  grant and an audience mapper for `svc-cus-profile-kyc`; the credential in
+  Secrets Manager under `<env>/compliance-evidence-service/svc-client`,
+  synced to the Kubernetes Secret the chart reads (`identity.clientSecret`,
+  `SVC_CLIENT_SECRET` through `valueFrom.secretKeyRef`; the chart ships no
+  ExternalSecret or SecretStore for it); the environment values for
+  `config.CUSTOMER_SERVICE_URL` and `config.OIDC_TOKEN_URI`. The chart
+  renders and checks `SVC_CLIENT_ID`, `COMPLIANCE_V1_CALLER_FACTS_ENABLED`
+  and `COMPLIANCE_LIST_MAX_AGE_*` with defaults.
 - DBA: a loader role with SELECT, INSERT, DELETE on the two list tables, or
   the schema owner runs the loader.
 - Payments: move to v2 and drop the three flags from the request.

@@ -237,7 +237,89 @@ Takes a dict: key (the config key) and value (its value).
 {{- printf "config.%s must not be set: the chart sets DB_SSL_ROOT_CERT from the mounted RDS CA bundle, which the TLS startup assertions (DatabaseTlsGuard, KafkaTlsGuard; on by default) verify against" $key -}}
 {{- else if regexMatch "^FINTECHBANKXTLS" $name -}}
 {{- printf "config.%s must not be set: fintechbankx.tls.enforce is the test switch of the TLS startup assertions, which are on by default; only the local profile and tests turn them off, never a cluster" $key -}}
+{{- else if or (eq $name "SVCCLIENTSECRET") (regexMatch "^COMPLIANCEIDENTITYCLIENTSECRET" $name) -}}
+{{- printf "config.%s must not be set: the client credential is read from the Secret identity.clientSecret (SVC_CLIENT_SECRET through valueFrom.secretKeyRef), never from a ConfigMap" $key -}}
+{{- else if regexMatch "^COMPLIANCEIDENTITY" $name -}}
+{{- printf "config.%s must not be set: set the identity through OIDC_TOKEN_URI, SVC_CLIENT_ID and identity.clientSecret, whose values the chart checks" $key -}}
+{{- else if regexMatch "^COMPLIANCECUSTOMER" $name -}}
+{{- printf "config.%s must not be set: set the customer context through CUSTOMER_SERVICE_URL, whose value the chart checks" $key -}}
+{{- else if regexMatch "^COMPLIANCELISTS" $name -}}
+{{- printf "config.%s must not be set: set the list ages through COMPLIANCE_LIST_MAX_AGE_SANCTIONS and COMPLIANCE_LIST_MAX_AGE_PEP, whose values the chart checks" $key -}}
 {{- end -}}
+{{- end -}}
+
+{{/*
+The config keys every render needs (configmap.yaml): a missing or empty one fails
+the render instead of producing pods that cannot start or that refuse every
+screening. The screening keys (decision 0003) come after the platform ones.
+*/}}
+{{- define "compliance.requiredConfig" -}}
+{{- toJson (list "DB_URL" "KAFKA_BOOTSTRAP_SERVERS" "OIDC_ISSUER_URI" "OIDC_JWK_SET_URI" "OIDC_AUDIENCE"
+      "CUSTOMER_SERVICE_URL" "OIDC_TOKEN_URI" "SVC_CLIENT_ID" "COMPLIANCE_V1_CALLER_FACTS_ENABLED"
+      "COMPLIANCE_LIST_MAX_AGE_SANCTIONS" "COMPLIANCE_LIST_MAX_AGE_PEP") -}}
+{{- end -}}
+
+{{/*
+Values of the screening settings (decision 0003). The flag must be exactly
+"true" or "false" (Spring would read "yes" as a binding error at startup, after
+the rollout began); the list ages are ISO-8601 durations with at least one
+component (Duration.parse; "1d" or "24h" would stop the service at startup);
+the token endpoint is https (the client credential travels in the request
+body); the customer URL is an absolute http(s) URL without white space.
+*/}}
+{{- define "compliance.validateScreeningConfig" -}}
+{{- $flag := toString (default "" (index .Values.config "COMPLIANCE_V1_CALLER_FACTS_ENABLED")) -}}
+{{- if and $flag (not (or (eq $flag "true") (eq $flag "false"))) -}}
+{{- fail "config.COMPLIANCE_V1_CALLER_FACTS_ENABLED must be \"true\" or \"false\"" -}}
+{{- end -}}
+{{- range $key := list "COMPLIANCE_LIST_MAX_AGE_SANCTIONS" "COMPLIANCE_LIST_MAX_AGE_PEP" -}}
+{{- $age := toString (default "" (index $.Values.config $key)) -}}
+{{- if and $age (not (and (regexMatch "^P([0-9]+D)?(T([0-9]+H)?([0-9]+M)?([0-9]+S)?)?$" $age) (regexMatch "[0-9]" $age))) -}}
+{{- fail (printf "config.%s must be an ISO-8601 duration such as P1D, PT12H or P35D (days, hours, minutes, seconds)" $key) -}}
+{{- end -}}
+{{- end -}}
+{{- $token := toString (default "" (index .Values.config "OIDC_TOKEN_URI")) -}}
+{{- if and $token (not (regexMatch "^https://[^[:space:]]+$" $token)) -}}
+{{- fail "config.OIDC_TOKEN_URI must be an https:// URL: the client credential travels in the token request body" -}}
+{{- end -}}
+{{- $customer := toString (default "" (index .Values.config "CUSTOMER_SERVICE_URL")) -}}
+{{- if and $customer (not (regexMatch "^https?://[^[:space:]]+$" $customer)) -}}
+{{- fail "config.CUSTOMER_SERVICE_URL must be an absolute http:// or https:// URL of the customer context" -}}
+{{- end -}}
+{{- include "compliance.validateIdentitySecret" . -}}
+{{- end -}}
+
+{{/*
+identity.clientSecret names the existing Secret (platform-synced) and key the
+app pods read SVC_CLIENT_SECRET from. Both are required; the name is a
+DNS-1123 subdomain and the key a Secret data key, so a newline or space cannot
+reach the manifest.
+*/}}
+{{- define "compliance.identitySecretName" -}}
+{{- $identity := .Values.identity | default dict -}}
+{{- $secret := $identity.clientSecret | default dict -}}
+{{- $name := toString (default "" $secret.secretName) -}}
+{{- $_ := required "identity.clientSecret.secretName is required: the Kubernetes Secret holding this service's client credential (SVC_CLIENT_SECRET), synced by platform" $name -}}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" $name) -}}
+{{- fail "identity.clientSecret.secretName must be a DNS-1123 name" -}}
+{{- end -}}
+{{- $name -}}
+{{- end -}}
+
+{{- define "compliance.identitySecretKey" -}}
+{{- $identity := .Values.identity | default dict -}}
+{{- $secret := $identity.clientSecret | default dict -}}
+{{- $key := toString (default "" $secret.key) -}}
+{{- $_ := required "identity.clientSecret.key is required: the key of the client credential in identity.clientSecret.secretName" $key -}}
+{{- if not (regexMatch "^[-._a-zA-Z0-9]+$" $key) -}}
+{{- fail "identity.clientSecret.key must be a Secret key ([-._a-zA-Z0-9]+)" -}}
+{{- end -}}
+{{- $key -}}
+{{- end -}}
+
+{{- define "compliance.validateIdentitySecret" -}}
+{{- $_ := include "compliance.identitySecretName" . -}}
+{{- $_ = include "compliance.identitySecretKey" . -}}
 {{- end -}}
 
 {{- define "compliance.validateDatabaseTls" -}}

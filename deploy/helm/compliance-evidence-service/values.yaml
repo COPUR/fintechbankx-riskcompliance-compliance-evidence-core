@@ -76,6 +76,35 @@ config:
   # then override with --set-string config.OUTBOX_RELAY_ENABLED=true (runbook step 5).
   # Screenings are stored and their events wait in the outbox meanwhile.
   OUTBOX_RELAY_ENABLED: "false"
+  # Computed screening facts (decision 0003; runbook section 3a). Every key below is required
+  # (compliance.requiredConfig in templates/_helpers.tpl): a dropped or empty key fails the render.
+  # The customer context (svc-cus-profile-kyc) inside the mesh; the service reads
+  # GET /api/v1/customers/{id}/screening-profile with its own client-credentials token. An absolute
+  # http:// or https:// URL (in-mesh plaintext is wrapped by the sidecar's mutual TLS).
+  CUSTOMER_SERVICE_URL: ""
+  # The realm's token endpoint for the client-credentials grant; https only, the credential travels in
+  # the request body. Example: https://<idp>/realms/fintechbankx/protocol/openid-connect/token
+  OIDC_TOKEN_URI: ""
+  # This service's client id (token azp); its credential is identity.clientSecret below, never a config key.
+  SVC_CLIENT_ID: svc-cmp-evidence
+  # Deprecated POST /api/v1/compliance/screen (caller-attested facts): served only with "true"; "false"
+  # answers 410 and names /api/v2/compliance/screen. Exactly "true" or "false".
+  COMPLIANCE_V1_CALLER_FACTS_ENABLED: "false"
+  # A screening is refused (503 SCREENING_SOURCE_UNAVAILABLE) while a list is empty or a source was loaded
+  # longer ago than this. ISO-8601 durations (P1D, PT12H, P35D).
+  COMPLIANCE_LIST_MAX_AGE_SANCTIONS: P1D
+  COMPLIANCE_LIST_MAX_AGE_PEP: P35D
+
+# The client credential of svc-cmp-evidence (SVC_CLIENT_SECRET), read by the app pods from an existing
+# Kubernetes Secret in the namespace through valueFrom.secretKeyRef, like the Strimzi client certificate
+# (kafkaClientTls). The chart ships no ExternalSecret or SecretStore for it (platform rule): platform
+# syncs the Secret from Secrets Manager <env>/compliance-evidence-service/svc-client. The reference is
+# not optional, so a pod without the credential does not start instead of refusing every v2 screening.
+# The migration Job never mounts it.
+identity:
+  clientSecret:
+    secretName: compliance-evidence-service-svc-client
+    key: client-secret
 
 # The only Spring profile the chart renders (SPRING_PROFILES_ACTIVE in the ConfigMap):
 #   msk     -> kafka-msk: Amazon MSK IAM over SASL_SSL (application.yml), the default;

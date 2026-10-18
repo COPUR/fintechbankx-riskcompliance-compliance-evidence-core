@@ -75,6 +75,13 @@ spec:
             # Aurora CA bundle (DB_URL sslrootcert points at the same file).
             - name: DB_SSL_ROOT_CERT
               value: {{ include "compliance.databaseCaFile" . | quote }}
+            # The client credential for calls to the customer context (decision 0003), from an existing
+            # Secret platform syncs; not optional (compliance.validateIdentitySecret). Never a config key.
+            - name: SVC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "compliance.identitySecretName" . | quote }}
+                  key: {{ include "compliance.identitySecretKey" . | quote }}
             {{- if .Values.kafkaClientTls.enabled }}
             - name: KAFKA_TLS_CERT
               valueFrom:
