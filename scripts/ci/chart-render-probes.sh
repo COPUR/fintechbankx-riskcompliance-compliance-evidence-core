@@ -10,6 +10,8 @@ chart=deploy/helm/compliance-evidence-service
 args="--set image.repository=ci/compliance-evidence-service --set image.tag=${GITHUB_SHA} --set externalSecret.remoteSecretName=ci/compliance-evidence-service/db-app"
 # Schema owner credential, used only by the Flyway migration Job.
 args="$args --set externalSecret.migrationSecretName=ci/compliance-evidence-service/db-migration"
+# This service's client credential (platform CLIENT_SECRET_DELIVERY: one entry per service, synced by the chart).
+args="$args --set externalSecret.oidcClientSecretName=ci/compliance-evidence-service/oidc-client"
 # Aurora TLS (cicd-templates 4f0f266): the Terraform jdbc_url shape, verify-full against the mounted RDS CA bundle.
 args="$args --set config.DB_URL=jdbc:postgresql://ci:5432/db?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem"
 args="$args --set config.KAFKA_BOOTSTRAP_SERVERS=ci:9098"
@@ -411,14 +413,14 @@ for name, e in env.items():
 print("KAFKA_TLS_CERT/KEY/CA from valueFrom.secretKeyRef only")
 ' < <(helm template ci "$chart" $args $strimzi)
 # Computed screening facts (decision 0003). The chart renders CUSTOMER_SERVICE_URL, OIDC_TOKEN_URI, SVC_CLIENT_ID,
-# COMPLIANCE_V1_CALLER_FACTS_ENABLED and the two list ages from config.*, every one required
-# (compliance.requiredConfig: a dropped key fails the render), and SVC_CLIENT_SECRET only from
-# valueFrom.secretKeyRef on identity.clientSecret (an existing Secret, synced by platform; the chart ships no
-# ExternalSecret or SecretStore for it). The values are checked: the flag is "true" or "false", the ages are
-# ISO-8601 durations, the token endpoint is https (the credential travels in the request body), the customer URL
-# is an absolute http(s) URL. A property spelling of these settings, or the credential, in config.* is refused.
+# COMPLIANCE_V1_CALLER_FACTS_ENABLED, the two list ages and the two required-source lists from config.*, every one
+# required (compliance.requiredConfig: a dropped or empty key fails the render). The values are checked: the flag
+# is "true" or "false", the ages are ISO-8601 durations, the source lists are comma-separated list sources, the
+# token endpoint is https (the credential travels in the request body), the customer URL is an absolute http(s)
+# URL. A property spelling of these settings, or the credential, in config.* is refused.
 for key in CUSTOMER_SERVICE_URL OIDC_TOKEN_URI SVC_CLIENT_ID COMPLIANCE_V1_CALLER_FACTS_ENABLED \
-    COMPLIANCE_LIST_MAX_AGE_SANCTIONS COMPLIANCE_LIST_MAX_AGE_PEP; do
+    COMPLIANCE_LIST_MAX_AGE_SANCTIONS COMPLIANCE_LIST_MAX_AGE_PEP \
+    COMPLIANCE_SANCTIONS_REQUIRED_SOURCES COMPLIANCE_PEP_REQUIRED_SOURCES; do
   reject_render "config.$key is required" --set "config.$key=null"
   reject_render "config.$key is required" --set-string "config.$key="
 done
@@ -429,11 +431,11 @@ reject_render 'config.COMPLIANCE_IDENTITY_TOKEN_URI must not be set' --set-strin
 reject_render 'config.COMPLIANCE_CUSTOMER_BASE_URL must not be set' --set-string config.COMPLIANCE_CUSTOMER_BASE_URL=http://ci
 reject_render 'config.COMPLIANCE_LISTS_SANCTIONS_MAX_AGE must not be set' --set-string config.COMPLIANCE_LISTS_SANCTIONS_MAX_AGE=P1D
 reject_render 'config.compliance.lists.pep-max-age must not be set' --set-string 'config.compliance\.lists\.pep-max-age=P35D'
-for bad in yes 1 True FALSE "" ; do
-  [ -n "$bad" ] || continue
+reject_render 'config.COMPLIANCE_LISTS_SANCTIONS_REQUIRED_SOURCES must not be set' --set-string config.COMPLIANCE_LISTS_SANCTIONS_REQUIRED_SOURCES=UN
+for bad in yes 1 True FALSE; do
   reject_render 'config.COMPLIANCE_V1_CALLER_FACTS_ENABLED must be "true" or "false"' --set-string "config.COMPLIANCE_V1_CALLER_FACTS_ENABLED=$bad"
 done
-render_ok --set-string config.COMPLIANCE_V1_CALLER_FACTS_ENABLED=true
+render_ok --set-string config.COMPLIANCE_V1_CALLER_FACTS_ENABLED=false
 for key in COMPLIANCE_LIST_MAX_AGE_SANCTIONS COMPLIANCE_LIST_MAX_AGE_PEP; do
   for bad in 1d 24h P PT P1Y P-1D 86400; do
     reject_render "config.$key must be an ISO-8601 duration" --set-string "config.$key=$bad"
@@ -441,49 +443,71 @@ for key in COMPLIANCE_LIST_MAX_AGE_SANCTIONS COMPLIANCE_LIST_MAX_AGE_PEP; do
   render_ok --set-string "config.$key=PT12H"
   render_ok --set-string "config.$key=P35D"
 done
+for key in COMPLIANCE_SANCTIONS_REQUIRED_SOURCES COMPLIANCE_PEP_REQUIRED_SOURCES; do
+  for bad in "UN, OFAC" "UN,,OFAC" ",UN" "UN," "UN;OFAC" "-UN" "UN OFAC"; do
+    reject_render "config.$key must be a comma-separated list of list sources" --set-string "config.$key=$bad"
+  done
+  render_ok --set-string "config.$key=UN"
+  render_ok --set-string "config.$key=UN,OFAC-SDN,UAE-LOCAL"
+done
 reject_render 'config.OIDC_TOKEN_URI must be an https:// URL' --set-string config.OIDC_TOKEN_URI=http://ci/realms/fintechbankx/protocol/openid-connect/token
 reject_render 'config.OIDC_TOKEN_URI must be an https:// URL' --set-string config.OIDC_TOKEN_URI=ci/token
 reject_render 'config.CUSTOMER_SERVICE_URL must be an absolute http:// or https:// URL' --set-string config.CUSTOMER_SERVICE_URL=customer:8080
 reject_render 'config.CUSTOMER_SERVICE_URL must be an absolute http:// or https:// URL' --set-string 'config.CUSTOMER_SERVICE_URL=http://customer:8080 x'
 render_ok --set-string config.CUSTOMER_SERVICE_URL=https://customer.example.internal
-reject_render 'identity.clientSecret.secretName is required' --set-string identity.clientSecret.secretName=
-reject_render 'identity.clientSecret.key is required' --set-string identity.clientSecret.key=
-reject_render 'identity.clientSecret.secretName must be a DNS-1123 name' --set-string 'identity.clientSecret.secretName=Svc Client'
-reject_render 'identity.clientSecret.secretName must be a DNS-1123 name' --set-string identity.clientSecret.secretName=x$'\n'"                  injected: true"
-reject_render 'identity.clientSecret.key must be a Secret key' --set-string 'identity.clientSecret.key=client secret'
+# The client credential (platform CLIENT_SECRET_DELIVERY): the single Secrets Manager entry
+# <env>/compliance-evidence-service/oidc-client ({client_id, client_secret, issuer_uri, token_uri}), synced by the
+# chart's own ExternalSecret against the one ClusterSecretStore aws-secrets-manager into the Secret
+# <chart>-oidc-client (key SVC_CLIENT_SECRET from property client_secret), which only the app pods load (envFrom).
+reject_render 'externalSecret.oidcClientSecretName is required' --set externalSecret.oidcClientSecretName=
+reject_render 'externalSecret.oidcClientSecretName is required' --set externalSecret.oidcClientSecretName=null
+oidc_shared="externalSecret.oidcClientSecretName must not be the runtime or migration database secret"
+reject_render "$oidc_shared" --set externalSecret.oidcClientSecretName=ci/compliance-evidence-service/db-app
+reject_render "$oidc_shared" --set externalSecret.oidcClientSecretName=ci/compliance-evidence-service/db-migration/
+reject_render "must not contain a control character" \
+  --set "externalSecret.oidcClientSecretName=ci/compliance-evidence-service/oidc-client"$'\n'"        property: client_id"
+if helm template ci "$chart" $args --set externalSecret.oidcClientSecretName=ci/other-service/oidc-client \
+    | python3 scripts/ci/check-externalsecrets.py "$sa" 2>/dev/null; then
+  echo "ExternalSecret check accepted an oidc-client key outside <env>/$sa/" >&2; exit 1
+fi
 python3 -c '
 import sys, yaml
 docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
+secrets = {d["metadata"]["name"]: d for d in docs if d["kind"] == "ExternalSecret"}
+if sorted(secrets) != ["compliance-evidence-service-db", "compliance-evidence-service-db-migration", "compliance-evidence-service-oidc-client"]:
+    sys.exit("expected three ExternalSecrets (db, db-migration, oidc-client): %s" % sorted(secrets))
+oidc = secrets["compliance-evidence-service-oidc-client"]["spec"]
+if oidc["secretStoreRef"] != {"kind": "ClusterSecretStore", "name": "aws-secrets-manager"}:
+    sys.exit("the oidc-client ExternalSecret must use ClusterSecretStore aws-secrets-manager: %r" % oidc["secretStoreRef"])
+if oidc["target"]["name"] != "compliance-evidence-service-oidc-client" or "dataFrom" in oidc:
+    sys.exit("the oidc-client ExternalSecret must target its own Secret and list its keys: %r" % oidc)
+if oidc["data"] != [{"secretKey": "SVC_CLIENT_SECRET", "remoteRef": {"key": "ci/compliance-evidence-service/oidc-client", "property": "client_secret"}}]:
+    sys.exit("the oidc-client ExternalSecret must map client_secret of the oidc-client entry to SVC_CLIENT_SECRET only: %r" % oidc["data"])
 app = [d for d in docs if d["kind"] == "Deployment"][0]["spec"]["template"]["spec"]["containers"][0]
-env = {e["name"]: e for e in app["env"]}
-secret = env.get("SVC_CLIENT_SECRET")
-if secret is None:
-    sys.exit("the app pods lack SVC_CLIENT_SECRET")
-if set(secret) != {"name", "valueFrom"} or set(secret["valueFrom"]) != {"secretKeyRef"}:
-    sys.exit("SVC_CLIENT_SECRET must come only from valueFrom.secretKeyRef: %r" % secret)
-ref = secret["valueFrom"]["secretKeyRef"]
-if ref != {"name": "svc-client-ci", "key": "credential-ci"}:
-    sys.exit("SVC_CLIENT_SECRET must read identity.clientSecret.secretName/key: %r" % ref)
-if ref.get("optional"):
-    sys.exit("SVC_CLIENT_SECRET must not be optional: a pod without the credential must not start")
-configmaps = [d for d in docs if d["kind"] == "ConfigMap"]
-for cm in configmaps:
+sources = [e["secretRef"]["name"] for e in app["envFrom"] if "secretRef" in e]
+if sources != ["compliance-evidence-service-db", "compliance-evidence-service-oidc-client"]:
+    sys.exit("the app pods must load the runtime db Secret and the oidc-client Secret, nothing else: %s" % sources)
+if any(e["name"] == "SVC_CLIENT_SECRET" for e in app["env"]):
+    sys.exit("SVC_CLIENT_SECRET must come from the oidc-client Secret (envFrom), not an env entry")
+for cm in [d for d in docs if d["kind"] == "ConfigMap"]:
     for key in cm.get("data") or {}:
         if "SECRET" in key.upper() and key != "OIDC_JWK_SET_URI":
             sys.exit("ConfigMap %s carries a secret-looking key %s" % (cm["metadata"]["name"], key))
 config = [d for d in docs if d["kind"] == "ConfigMap" and d["metadata"]["name"] == "compliance-evidence-service"][0]["data"]
-for key, want in {"SVC_CLIENT_ID": "svc-cmp-evidence", "COMPLIANCE_V1_CALLER_FACTS_ENABLED": "false",
-                  "COMPLIANCE_LIST_MAX_AGE_SANCTIONS": "P1D", "COMPLIANCE_LIST_MAX_AGE_PEP": "P35D"}.items():
+for key, want in {"SVC_CLIENT_ID": "svc-cmp-evidence", "COMPLIANCE_V1_CALLER_FACTS_ENABLED": "true",
+                  "COMPLIANCE_LIST_MAX_AGE_SANCTIONS": "P1D", "COMPLIANCE_LIST_MAX_AGE_PEP": "P35D",
+                  "COMPLIANCE_SANCTIONS_REQUIRED_SOURCES": "UN,OFAC-SDN,UAE-LOCAL", "COMPLIANCE_PEP_REQUIRED_SOURCES": "UAE-PEP"}.items():
     if config.get(key) != want:
         sys.exit("ConfigMap %s is %r, expected %r by default" % (key, config.get(key), want))
 for key in ("CUSTOMER_SERVICE_URL", "OIDC_TOKEN_URI"):
     if not config.get(key):
         sys.exit("ConfigMap lacks " + key)
 job = [d for d in docs if d["kind"] == "Job"][0]["spec"]["template"]["spec"]["containers"][0]
-if any(e["name"] == "SVC_CLIENT_SECRET" for e in job.get("env") or []):
-    sys.exit("the migration Job must not mount SVC_CLIENT_SECRET: it only migrates")
-print("SVC_CLIENT_SECRET from valueFrom.secretKeyRef only (identity.clientSecret), screening config rendered")
-' < <(helm template ci "$chart" $args --set-string identity.clientSecret.secretName=svc-client-ci --set-string identity.clientSecret.key=credential-ci)
+if any(e.get("secretRef", {}).get("name") == "compliance-evidence-service-oidc-client" for e in job.get("envFrom") or []) \
+        or any(e["name"] == "SVC_CLIENT_SECRET" for e in job.get("env") or []):
+    sys.exit("the migration Job must not load the oidc-client Secret: it only migrates")
+print("SVC_CLIENT_SECRET from the oidc-client ExternalSecret only (aws-secrets-manager), screening config rendered")
+' <<<"$rendered"
 # DocumentDB names (the service has none; the guard keeps them out of the environment).
 mongodb='is not allowed: a spring.data.mongodb.\* property'
 reject_render_re "config.SPRING_DATA_MONGODB_URI $mongodb" --set-string 'config.SPRING_DATA_MONGODB_URI=mongodb://docdb.example.internal:27017/db?tls=false'

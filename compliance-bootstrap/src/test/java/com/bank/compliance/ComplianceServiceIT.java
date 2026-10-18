@@ -69,9 +69,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  */
 // The TLS startup assertions are on by default; the test database has no TLS, so the test
 // switch (test annotations only, never a shipped application*.yml) turns them off here.
-// The deprecated v1 (caller-attested facts) is served here behind its flag; ComplianceV1RetiredIT covers the default.
+// The deprecated v1 (caller-attested facts) is served here with the shipped default of its flag
+// (COMPLIANCE_V1_CALLER_FACTS_ENABLED unset: true, so a deploy does not break payments still on v1);
+// ComplianceV1RetiredIT sets it to false. The required list sources match the fixtures loadFreshLists() writes.
 @SpringBootTest(properties = {"compliance.outbox.relay.enabled=false", "fintechbankx.tls.enforce=false",
-        "compliance.v1-caller-facts.enabled=true"})
+        "compliance.lists.sanctions-required-sources=UN,OFAC-SDN,UAE-LOCAL", "compliance.lists.pep-required-sources=UAE-PEP"})
 @AutoConfigureMockMvc
 class ComplianceServiceIT {
 
@@ -262,6 +264,60 @@ class ComplianceServiceIT {
             .andExpect(status().isServiceUnavailable())
             .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("PEP register is stale")));
 
+        assertThat(jdbc.queryForObject("select count(*) from sc_cmp_evidence.compliance_screening", Integer.class)).isZero();
+        assertThat(outboxRows()).isZero();
+    }
+
+    /** A partial set of lists never screens as complete: a required source that is missing is a 503, hit or no hit. */
+    @Test
+    void v2AMissingRequiredSourceIsA503ForAHitAndForANoHit() throws Exception {
+        customerService.customer("C-CLEAN", "Test", "Clean Person", "VERIFIED");
+        customerService.customer("C-SANC", "Test", "Sanctioned Person", "VERIFIED");
+        PostgresTestDatabase.owner().update("delete from sc_cmp_evidence.sanctions_list_entry where list_source = 'OFAC-SDN'");
+
+        screenV2("PAY-V2-NO-OFAC", "C-CLEAN", "10.00", "USD")
+            .andExpect(status().isServiceUnavailable())
+            .andExpect(jsonPath("$.code").value("SCREENING_SOURCE_UNAVAILABLE"))
+            .andExpect(jsonPath("$.message").value("The sanctions list is missing the required source OFAC-SDN"));
+        screenV2("PAY-V2-NO-OFAC-HIT", "C-SANC", "10.00", "USD")
+            .andExpect(status().isServiceUnavailable())
+            .andExpect(jsonPath("$.message").value("The sanctions list is missing the required source OFAC-SDN"));
+
+        PostgresTestDatabase.owner().update("delete from sc_cmp_evidence.pep_register_entry where list_source = 'UAE-PEP'");
+        PostgresTestDatabase.owner().update("""
+            insert into sc_cmp_evidence.pep_register_entry (normalized_name, display_name, list_source, list_version, loaded_at)
+            values ('TEST OTHER PEP', 'Test Other Pep', 'OTHER-PEP', '1', now())
+            """);
+        loadFreshLists();
+        PostgresTestDatabase.owner().update("update sc_cmp_evidence.pep_register_entry set list_source = 'OTHER-PEP' where list_source = 'UAE-PEP'");
+        screenV2("PAY-V2-NO-UAE-PEP", "C-CLEAN", "10.00", "USD")
+            .andExpect(status().isServiceUnavailable())
+            .andExpect(jsonPath("$.message").value("The PEP register is missing the required source UAE-PEP"));
+
+        assertThat(jdbc.queryForObject("select count(*) from sc_cmp_evidence.compliance_screening", Integer.class)).isZero();
+        assertThat(outboxRows()).isZero();
+    }
+
+    /** v2 has the same gate as v1: a verified token, and a listed SERVICE client or compliance staff. */
+    @Test
+    void v2NeedsATokenAndAListedServiceOrComplianceStaff() throws Exception {
+        customerService.customer("C-CLEAN", "Test", "Clean Person", "VERIFIED");
+        String body = bodyV2("PAY-V2-AUTHZ", "C-CLEAN", "10.00", "USD");
+
+        mvc.perform(post("/api/v2/compliance/screen").contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isUnauthorized());
+        mvc.perform(post("/api/v2/compliance/screen").contentType(MediaType.APPLICATION_JSON).content(body)
+                .with(jwt().jwt(j -> j.subject("auditor-1")).authorities(new SimpleGrantedAuthority("ROLE_AUDITOR"))))
+            .andExpect(status().isForbidden());
+        mvc.perform(post("/api/v2/compliance/screen").contentType(MediaType.APPLICATION_JSON).content(body)
+                .with(jwt().jwt(j -> j.subject("customer-1")).authorities(new SimpleGrantedAuthority("ROLE_CUSTOMER"))))
+            .andExpect(status().isForbidden());
+        mvc.perform(post("/api/v2/compliance/screen").contentType(MediaType.APPLICATION_JSON).content(body)
+                .with(jwt().jwt(j -> j.subject("svc-rsk-decisioning").claim("azp", "svc-rsk-decisioning"))
+                    .authorities(new SimpleGrantedAuthority("ROLE_SERVICE"))))
+            .andExpect(status().isForbidden());
+
+        assertThat(customerService.lastAuthorization.get()).as("no source consulted for a refused caller").isNull();
         assertThat(jdbc.queryForObject("select count(*) from sc_cmp_evidence.compliance_screening", Integer.class)).isZero();
         assertThat(outboxRows()).isZero();
     }

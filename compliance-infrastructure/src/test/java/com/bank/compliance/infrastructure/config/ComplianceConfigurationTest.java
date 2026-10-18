@@ -40,7 +40,7 @@ class ComplianceConfigurationTest {
                 ruleService, new InMemoryComplianceResultRepository(), publisher,
                 mock(com.bank.compliance.domain.port.out.CustomerProfilePort.class),
                 mock(com.bank.compliance.domain.port.out.NameScreeningPort.class),
-                configuration.listFreshnessPolicy(java.time.Duration.ofDays(1), java.time.Duration.ofDays(35)),
+                configuration.listFreshnessPolicy(java.time.Duration.ofDays(1), java.time.Duration.ofDays(35), java.util.List.of("UN"), java.util.List.of("UAE-PEP")),
                 configuration.screeningClock(), transactions);
         ComplianceResult result = useCase.screen(
                 new ComplianceScreeningCommand("TX-CFG", "C-1", new BigDecimal("50.00"), "AED", false, true, false, com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS));
@@ -56,8 +56,11 @@ class ComplianceConfigurationTest {
     /** The maximum list ages come from configuration (COMPLIANCE_LIST_MAX_AGE_SANCTIONS / _PEP) and the clock is UTC. */
     @Test
     void theFreshnessPolicyAndClockBeansFollowConfiguration() {
-        var policy = configuration.listFreshnessPolicy(java.time.Duration.parse("PT12H"), java.time.Duration.parse("P7D"));
+        var policy = configuration.listFreshnessPolicy(java.time.Duration.parse("PT12H"), java.time.Duration.parse("P7D"),
+                java.util.List.of("UN", "OFAC-SDN"), java.util.List.of("UAE-PEP"));
 
+        assertThat(policy.requiredSourcesOf(com.bank.compliance.domain.ScreeningList.SANCTIONS)).containsExactly("UN", "OFAC-SDN");
+        assertThat(policy.requiredSourcesOf(com.bank.compliance.domain.ScreeningList.PEP)).containsExactly("UAE-PEP");
         assertThat(policy.maxAgeOf(com.bank.compliance.domain.ScreeningList.SANCTIONS)).isEqualTo(java.time.Duration.ofHours(12));
         assertThat(policy.maxAgeOf(com.bank.compliance.domain.ScreeningList.PEP)).isEqualTo(java.time.Duration.ofDays(7));
         assertThat(configuration.screeningClock().getZone()).isEqualTo(java.time.ZoneOffset.UTC);

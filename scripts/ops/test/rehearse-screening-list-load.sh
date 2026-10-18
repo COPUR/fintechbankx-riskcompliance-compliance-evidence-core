@@ -109,12 +109,34 @@ check "PEP rows loaded into their own table" \
 check "the PEP load did not touch the sanctions list" \
   "SELECT count(*) FROM $schema.sanctions_list_entry" "3"
 
+echo "--- a reload that shrinks a source below 90% is refused unless --allow-shrink is passed"
+{ printf 'display_name\n'; for i in $(seq 1 10); do printf 'Test Shrink Dummy %s\n' "$i"; done; } > "$work/ten.csv"
+{ printf 'display_name\n'; for i in $(seq 1 9); do printf 'Test Shrink Dummy %s\n' "$i"; done; } > "$work/nine.csv"
+{ printf 'display_name\n'; for i in $(seq 1 8); do printf 'Test Shrink Dummy %s\n' "$i"; done; } > "$work/eight.csv"
+"$loader" "$conn" sanctions "$work/ten.csv" SHRINK-TEST 1
+check "ten rows loaded" "SELECT count(*) FROM $schema.sanctions_list_entry WHERE list_source = 'SHRINK-TEST'" "10"
+must_fail "a reload with 8 of 10 rows (below 90%)" "$loader" "$conn" sanctions "$work/eight.csv" SHRINK-TEST 2
+grep -q "allow-shrink" "$work/refused.out" || { echo "FAIL the shrink refusal does not name --allow-shrink" >&2; cat "$work/refused.out" >&2; exit 1; }
+check "the refused shrink left the ten rows and the old version" \
+  "SELECT count(*) || ' ' || min(list_version) FROM $schema.sanctions_list_entry WHERE list_source = 'SHRINK-TEST'" "10 1"
+"$loader" "$conn" sanctions "$work/nine.csv" SHRINK-TEST 3
+check "a reload with 9 of 10 rows (exactly 90%) is accepted" \
+  "SELECT count(*) || ' ' || min(list_version) FROM $schema.sanctions_list_entry WHERE list_source = 'SHRINK-TEST'" "9 3"
+"$loader" --allow-shrink "$conn" sanctions "$work/eight.csv" SHRINK-TEST 4 > "$work/shrink.out" 2>&1
+grep -q "allow-shrink" "$work/shrink.out" || { echo "FAIL an allowed shrink is not logged" >&2; cat "$work/shrink.out" >&2; exit 1; }
+check "a reload with 8 of 9 rows and --allow-shrink replaces the source" \
+  "SELECT count(*) || ' ' || min(list_version) FROM $schema.sanctions_list_entry WHERE list_source = 'SHRINK-TEST'" "8 4"
+echo "ok   shrink guard"
+
 echo "--- refusals (each must leave the lists as they are)"
 before="$(psql -X -At -d "$db" -c "SELECT (SELECT count(*) FROM $schema.sanctions_list_entry) || '/' || (SELECT count(*) FROM $schema.pep_register_entry)")"
 # The credential keyword is built from parts so this probe input is not itself a secret-scan hit.
 credential_keyword="pass""word"
 must_fail "credential in keyword conninfo" "$loader" "dbname=$db ${credential_keyword}=not-allowed-here" sanctions "$work/ofac.csv" OFAC-SDN 1843
 must_fail "credential in URI conninfo" "$loader" "postgresql://loader:not-allowed-here@localhost/$db" sanctions "$work/ofac.csv" OFAC-SDN 1843
+must_fail "credential in URI query" "$loader" "postgresql://localhost/$db?${credential_keyword}=not-allowed-here" sanctions "$work/ofac.csv" OFAC-SDN 1843
+must_fail "credential in URI query after another parameter" "$loader" "postgresql://localhost/$db?sslmode=prefer&${credential_keyword}=x" sanctions "$work/ofac.csv" OFAC-SDN 1843
+must_fail "credential keyword in upper case" "$loader" "dbname=$db $(printf '%s' "$credential_keyword" | tr a-z A-Z)=x" sanctions "$work/ofac.csv" OFAC-SDN 1843
 : > "$work/empty.csv"
 must_fail "empty file" "$loader" "$conn" sanctions "$work/empty.csv" OFAC-SDN 1843
 printf 'display_name\n' > "$work/header-only.csv"

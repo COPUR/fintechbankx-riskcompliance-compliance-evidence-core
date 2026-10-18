@@ -23,11 +23,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * With the shipped default (COMPLIANCE_V1_CALLER_FACTS_ENABLED unset, so
- * false) the caller-attested v1 screening is gone: payments must send ids and
- * amounts to v2. Reading stored results on v1 is unaffected.
+ * Once the environment sets COMPLIANCE_V1_CALLER_FACTS_ENABLED=false (the
+ * cut-over step after payments moves to v2; the shipped default stays true so
+ * a deploy does not break payments still on v1) the caller-attested v1
+ * screening is gone: payments must send ids and amounts to v2. Reading stored
+ * results on v1 is unaffected.
  */
-@SpringBootTest(properties = {"compliance.outbox.relay.enabled=false", "fintechbankx.tls.enforce=false"})
+@SpringBootTest(properties = {"compliance.outbox.relay.enabled=false", "fintechbankx.tls.enforce=false",
+        "compliance.v1-caller-facts.enabled=false"})
 @AutoConfigureMockMvc
 class ComplianceV1RetiredIT {
 
@@ -46,7 +49,7 @@ class ComplianceV1RetiredIT {
     @MockBean KafkaTemplate<String, String> kafka;
 
     @Test
-    void theV1ScreeningIsGoneByDefaultAndNamesV2() throws Exception {
+    void theV1ScreeningIsGoneWithTheFlagOffAndNamesV2() throws Exception {
         int before = jdbc.queryForObject("select count(*) from sc_cmp_evidence.compliance_screening", Integer.class);
 
         mvc.perform(post("/api/v1/compliance/screen").with(payments())

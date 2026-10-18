@@ -78,7 +78,7 @@ class ComplianceScreeningServiceTest {
     @BeforeEach
     void setUp() {
         service = new ComplianceScreeningService(ruleService, repository, eventPublisher, customerProfiles, nameScreening,
-                new ListFreshnessPolicy(Duration.ofDays(1), Duration.ofDays(35)), Clock.fixed(NOW, ZoneOffset.UTC));
+                new ListFreshnessPolicy(Duration.ofDays(1), Duration.ofDays(35), List.of("UN"), List.of("UAE-LOCAL")), Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
     @Test

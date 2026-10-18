@@ -87,13 +87,57 @@ class CustomerProfileHttpAdapterTest {
         server.verify();
     }
 
+    /** Only the customer context's own answer counts as "no such customer": its ErrorResponse with code CUSTOMER_NOT_FOUND. */
     @Test
     void aCustomerThatDoesNotExistIsEmptyNotAnOutage() {
         server.expect(requestTo(BASE + "/api/v1/customers/C-404/screening-profile")).andRespond(withResourceNotFound()
-                .contentType(MediaType.APPLICATION_JSON).body("{\"code\":\"CUSTOMER_NOT_FOUND\",\"message\":\"Customer not found\"}"));
-
+                .contentType(MediaType.APPLICATION_JSON)
+                .body("{\"code\":\"CUSTOMER_NOT_FOUND\",\"message\":\"Customer not found\",\"interactionId\":\"x\",\"timestamp\":\"2026-10-18T00:00:00Z\"}"));
         assertThat(adapter.findCustomer("C-404")).isEmpty();
         server.verify();
+
+        server.reset();
+        server.expect(requestTo(BASE + "/api/v1/customers/C-404/screening-profile")).andRespond(withResourceNotFound()
+                .contentType(MediaType.APPLICATION_PROBLEM_JSON).body("{\"code\":\"CUSTOMER_NOT_FOUND\",\"title\":\"Not Found\"}"));
+        assertThat(adapter.findCustomer("C-404")).isEmpty();
+    }
+
+    /** A route, ingress or mesh 404 is not a statement about the customer: payments must keep retrying, not decline. */
+    @Test
+    void aBare404OrAnotherBodyIsAnOutageNotANotFound() {
+        String outage = "The customer profile service answered HTTP 404 without the customer's CUSTOMER_NOT_FOUND code";
+        server.expect(requestTo(BASE + "/api/v1/customers/C-1/screening-profile")).andRespond(withResourceNotFound());
+        assertThatThrownBy(() -> adapter.findCustomer("C-1")).isInstanceOf(ScreeningSourceUnavailableException.class).hasMessage(outage);
+
+        server.reset();
+        server.expect(requestTo(BASE + "/api/v1/customers/C-1/screening-profile")).andRespond(withResourceNotFound()
+                .contentType(MediaType.APPLICATION_JSON).body("{\"code\":\"NOT_FOUND\",\"message\":\"No such resource\"}"));
+        assertThatThrownBy(() -> adapter.findCustomer("C-1")).isInstanceOf(ScreeningSourceUnavailableException.class).hasMessage(outage);
+
+        server.reset();
+        server.expect(requestTo(BASE + "/api/v1/customers/C-1/screening-profile")).andRespond(withResourceNotFound()
+                .contentType(MediaType.TEXT_HTML).body("<html>404 Not Found</html>"));
+        assertThatThrownBy(() -> adapter.findCustomer("C-1")).isInstanceOf(ScreeningSourceUnavailableException.class).hasMessage(outage);
+
+        server.reset();
+        server.expect(requestTo(BASE + "/api/v1/customers/C-1/screening-profile")).andRespond(withResourceNotFound()
+                .contentType(MediaType.APPLICATION_JSON).body("{not json"));
+        assertThatThrownBy(() -> adapter.findCustomer("C-1")).isInstanceOf(ScreeningSourceUnavailableException.class).hasMessage(outage);
+    }
+
+    /** A 200 this adapter cannot read (another content type, malformed JSON) is an outage, not a 500. */
+    @Test
+    void anUnreadableProfileIsAnOutage() {
+        server.expect(requestTo(BASE + "/api/v1/customers/C-1/screening-profile"))
+                .andRespond(withSuccess("<html>maintenance</html>", MediaType.TEXT_HTML));
+        assertThatThrownBy(() -> adapter.findCustomer("C-1")).isInstanceOf(ScreeningSourceUnavailableException.class)
+                .hasMessage("The customer profile service answered with an unreadable profile");
+
+        server.reset();
+        server.expect(requestTo(BASE + "/api/v1/customers/C-1/screening-profile"))
+                .andRespond(withSuccess("{not json", MediaType.APPLICATION_JSON));
+        assertThatThrownBy(() -> adapter.findCustomer("C-1")).isInstanceOf(ScreeningSourceUnavailableException.class)
+                .hasMessage("The customer profile service answered with an unreadable profile");
     }
 
     @Test

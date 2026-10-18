@@ -74,6 +74,7 @@ jobs:
           args="--set image.repository=ci/compliance-evidence-service --set image.tag=${{ github.sha }}"
           args="$args --set externalSecret.remoteSecretName=ci/compliance-evidence-service/db-app"
           args="$args --set externalSecret.migrationSecretName=ci/compliance-evidence-service/db-migration"
+          args="$args --set externalSecret.oidcClientSecretName=ci/compliance-evidence-service/oidc-client"
           # Aurora TLS (cicd-templates 4f0f266): the Terraform jdbc_url shape, verify-full against the mounted RDS CA bundle.
           args="$args --set config.DB_URL=jdbc:postgresql://ci:5432/db?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem"
           args="$args --set config.KAFKA_BOOTSTRAP_SERVERS=ci:9098"
