@@ -40,11 +40,35 @@ class ComplianceControllerTest {
     @BeforeEach
     void setUp() {
         service = mock(ComplianceScreeningUseCase.class);
-        mockMvc = MockMvcBuilders.standaloneSetup(new ComplianceController(service,
-                        new CallerAttestation(new ServiceCallerPolicy("svc-pay-initiation-settlement"))))
+        // v1 (caller-attested facts) is deprecated and served only while COMPLIANCE_V1_CALLER_FACTS_ENABLED=true.
+        mockMvc = controller(true);
+    }
+
+    private MockMvc controller(boolean v1CallerFactsEnabled) {
+        return MockMvcBuilders.standaloneSetup(new ComplianceController(service,
+                        new CallerAttestation(new ServiceCallerPolicy("svc-pay-initiation-settlement")), v1CallerFactsEnabled))
                 .setControllerAdvice(new ApiExceptionHandler())
                 .defaultRequest(get("/").principal(token("svc-pay-initiation-settlement", "svc-pay-initiation-settlement", "SERVICE")))
                 .build();
+    }
+
+    /** Default: the flag is off, POST v1 is gone and names its replacement; reading results is unaffected. */
+    @Test
+    void withTheV1FlagOffScreeningIsGoneAndNamesV2() throws Exception {
+        MockMvc retired = controller(false);
+        when(service.findByTransactionId("TX-OLD")).thenReturn(Optional.of(
+                ComplianceResultFixtures.result("TX-OLD", "C1", ComplianceDecision.PASS, List.of("COMPLIANT"))));
+
+        retired.perform(post("/api/v1/compliance/screen").contentType(MediaType.APPLICATION_JSON).content(body("TX-GONE", "C1", "10")))
+                .andExpect(status().isGone())
+                .andExpect(jsonPath("$.code").value("ENDPOINT_GONE"))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("POST /api/v2/compliance/screen")))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("COMPLIANCE_V1_CALLER_FACTS_ENABLED")));
+        org.mockito.Mockito.verify(service, org.mockito.Mockito.never()).screen(any());
+
+        retired.perform(get("/api/v1/compliance/screenings/TX-OLD"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.transactionId").value("TX-OLD"));
     }
 
     @Test

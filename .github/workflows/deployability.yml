@@ -128,3 +128,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Rehearse monolith-to-service compliance report backfill and reconciliation
         run: scripts/migration/verify-backfill.sh
+      # Sanctions and PEP list loads (scripts/ops/load-screening-list.sh): transactional replace per source,
+      # SQL-side normalisation checked against the Java domain's fixtures, every refusal probed.
+      - name: Rehearse the screening list load (sanctions, PEP)
+        run: scripts/ops/test/rehearse-screening-list-load.sh

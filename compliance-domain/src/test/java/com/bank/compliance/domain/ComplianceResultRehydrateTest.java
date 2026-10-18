@@ -2,6 +2,7 @@ package com.bank.compliance.domain;
 
 import org.junit.jupiter.api.Test;
 
+import com.bank.compliance.domain.port.in.ComputedFactsScreeningCommand;
 import com.bank.compliance.domain.service.ComplianceRuleService;
 
 import java.math.BigDecimal;
@@ -17,11 +18,14 @@ class ComplianceResultRehydrateTest {
     private static final ScreeningFacts SANCTIONED =
             new ScreeningFacts(new BigDecimal("250.0000"), "AED", true, true, false, com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS);
 
+    private static final ListVersion UN_LIST = new ListVersion(ScreeningList.SANCTIONS, "UN", "2026-10-17", CHECKED.minusSeconds(3600));
+    private static final ListVersion PEP_LIST = new ListVersion(ScreeningList.PEP, "UAE-LOCAL", "2026-10", CHECKED.minusSeconds(7200));
+
     @Test
     void rehydrateKeepsTheRecordedDecision() {
         ComplianceResult stored = ComplianceResult.rehydrate(new ComplianceResultSnapshot(
                 ComplianceResultId.of("CMP-1"), "TX-1", "42", SANCTIONED, ComplianceDecision.FAIL, List.of("SANCTIONS_HIT"),
-                "cmp-screening-rules-v0", CHECKED));
+                "cmp-screening-rules-v0", CHECKED, List.of()));
 
         assertThat(stored.getId()).isEqualTo(ComplianceResultId.of("CMP-1"));
         assertThat(stored.getDecision()).isEqualTo(ComplianceDecision.FAIL);
@@ -33,19 +37,69 @@ class ComplianceResultRehydrateTest {
         assertThat(stored.getAttestedBy()).isEqualTo("svc-pay-initiation-settlement");
         // Evidence keeps the rule set that decided it, even after the rules change.
         assertThat(stored.getRuleSetVersion()).isEqualTo("cmp-screening-rules-v0");
+        // A caller-attested screening consulted no list.
+        assertThat(stored.getListVersions()).isEmpty();
+    }
+
+    /** The evidence of a computed screening names the list loads the facts were matched against. */
+    @Test
+    void rehydrateKeepsTheListVersionsOfAComputedScreening() {
+        ScreeningFacts computed = new ScreeningFacts(new BigDecimal("250.00"), "AED", true, true, false,
+                Attestation.computed("svc-pay-initiation-settlement"));
+        ComplianceResult stored = ComplianceResult.rehydrate(new ComplianceResultSnapshot(
+                ComplianceResultId.of("CMP-3"), "TX-3", "42", computed, ComplianceDecision.FAIL, List.of("SANCTIONS_HIT"),
+                ComplianceRuleService.RULE_SET_VERSION, CHECKED, List.of(UN_LIST, PEP_LIST)));
+
+        assertThat(stored.getAttestation()).isEqualTo(AttestationSource.COMPUTED);
+        assertThat(stored.getAttestedBy()).isEqualTo("svc-pay-initiation-settlement");
+        assertThat(stored.getListVersions()).containsExactly(UN_LIST, PEP_LIST);
+        assertThatThrownBy(() -> stored.getListVersions().add(UN_LIST)).isInstanceOf(UnsupportedOperationException.class);
     }
 
     @Test
     void rehydrateStillValidatesTheRow() {
         assertThatThrownBy(() -> ComplianceResult.rehydrate(new ComplianceResultSnapshot(
-                ComplianceResultId.of("CMP-2"), "TX-2", " ", SANCTIONED, ComplianceDecision.PASS, List.of(), "v1", CHECKED)))
+                ComplianceResultId.of("CMP-2"), "TX-2", " ", SANCTIONED, ComplianceDecision.PASS, List.of(), "v1", CHECKED, List.of())))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> ComplianceResult.rehydrate(new ComplianceResultSnapshot(
-                ComplianceResultId.of("CMP-2"), "TX-2", "42", null, ComplianceDecision.PASS, List.of(), "v1", CHECKED)))
+                ComplianceResultId.of("CMP-2"), "TX-2", "42", null, ComplianceDecision.PASS, List.of(), "v1", CHECKED, List.of())))
                 .hasMessageContaining("facts");
         assertThatThrownBy(() -> ComplianceResult.rehydrate(new ComplianceResultSnapshot(
-                ComplianceResultId.of("CMP-2"), "TX-2", "42", SANCTIONED, ComplianceDecision.PASS, List.of(), " ", CHECKED)))
+                ComplianceResultId.of("CMP-2"), "TX-2", "42", SANCTIONED, ComplianceDecision.PASS, List.of(), " ", CHECKED, List.of())))
                 .hasMessageContaining("ruleSetVersion");
+        assertThatThrownBy(() -> ComplianceResult.rehydrate(new ComplianceResultSnapshot(
+                ComplianceResultId.of("CMP-2"), "TX-2", "42", SANCTIONED, ComplianceDecision.PASS, List.of(), "v1", CHECKED, null)))
+                .hasMessageContaining("listVersions");
+    }
+
+    /**
+     * A v2 replay states ids and the amount only, so it is a replay when the
+     * customer, the amount by value, the currency and the requester match the
+     * recorded computed screening. The flags are not the caller's to repeat.
+     */
+    @Test
+    void aComputedReplayMatchesCustomerAmountCurrencyAndRequester() {
+        Attestation payments = Attestation.computed("svc-pay-initiation-settlement");
+        ComplianceResult result = ComplianceResult.create("TX-5", "42",
+                new ScreeningFacts(new BigDecimal("250.00"), "AED", true, true, false, payments),
+                ComplianceDecision.FAIL, List.of("SANCTIONS_HIT"), ComplianceRuleService.RULE_SET_VERSION, List.of(UN_LIST, PEP_LIST));
+
+        assertThat(result.isReplayOf(new ComputedFactsScreeningCommand("TX-5", "42", new BigDecimal("250"), "AED", payments))).isTrue();
+        assertThat(result.isReplayOf(new ComputedFactsScreeningCommand("TX-5", "43", new BigDecimal("250"), "AED", payments))).isFalse();
+        assertThat(result.isReplayOf(new ComputedFactsScreeningCommand("TX-5", "42", new BigDecimal("250.01"), "AED", payments))).isFalse();
+        assertThat(result.isReplayOf(new ComputedFactsScreeningCommand("TX-5", "42", new BigDecimal("250"), "USD", payments))).isFalse();
+        assertThat(result.isReplayOf(new ComputedFactsScreeningCommand("TX-5", "42", new BigDecimal("250"), "AED",
+                Attestation.computed("svc-ln-loan-lifecycle")))).isFalse();
+    }
+
+    /** A v1 (caller-attested) result is never handed out as the answer to a v2 request for the same transaction. */
+    @Test
+    void aCallerAttestedResultIsNotAReplayOfAComputedRequest() {
+        ComplianceResult callerAttested = ComplianceResult.create("TX-6", "42", SANCTIONED, ComplianceDecision.FAIL,
+                List.of("SANCTIONS_HIT"), ComplianceRuleService.RULE_SET_VERSION);
+
+        assertThat(callerAttested.isReplayOf(new ComputedFactsScreeningCommand("TX-6", "42", new BigDecimal("250"), "AED",
+                Attestation.computed("svc-pay-initiation-settlement")))).isFalse();
     }
 
     @Test

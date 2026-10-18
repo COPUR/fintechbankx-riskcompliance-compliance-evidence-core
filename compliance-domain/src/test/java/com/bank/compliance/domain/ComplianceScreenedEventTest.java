@@ -17,7 +17,23 @@ class ComplianceScreenedEventTest {
     private static ComplianceResult stored(ComplianceDecision decision, List<String> reasons) {
         return ComplianceResult.rehydrate(new ComplianceResultSnapshot(
                 ComplianceResultId.of("CMP-0b9d1c5e-3f4a-4d8e-9a71-2c6f0e5b7d10"),
-                "PAY-77", "C-42", ComplianceResultFixtures.facts(), decision, reasons, "cmp-screening-rules-v1", CHECKED_AT));
+                "PAY-77", "C-42", ComplianceResultFixtures.facts(), decision, reasons, "cmp-screening-rules-v1", CHECKED_AT, List.of()));
+    }
+
+    /** The event keeps the outcome only: no facts, amount or list data, whoever computed the facts. */
+    @Test
+    void aComputedScreeningPublishesTheSameOutcomeOnlyEvent() {
+        ListVersion un = new ListVersion(ScreeningList.SANCTIONS, "UN", "2026-10-17", CHECKED_AT.minusSeconds(60));
+        ComplianceResult computed = ComplianceResult.create("PAY-78", "C-42",
+                new ScreeningFacts(new java.math.BigDecimal("12000.00"), "USD", true, true, true,
+                        Attestation.computed("svc-pay-initiation-settlement")),
+                ComplianceDecision.FAIL, List.of("SANCTIONS_HIT"), "cmp-screening-rules-v2", List.of(un));
+
+        ComplianceScreenedEvent event = computed.screenedEvent();
+
+        assertThat(event.decision()).isEqualTo(ComplianceDecision.FAIL);
+        assertThat(event.getClass().getRecordComponents()).extracting(java.lang.reflect.RecordComponent::getName)
+                .containsExactly("eventId", "occurredAt", "screeningId", "transactionId", "customerId", "decision", "reasons", "checkedAt");
     }
 
     @Test

@@ -53,6 +53,23 @@ class TransactionalComplianceScreeningTest {
         assertThat(readWrite.failed).containsExactly(IllegalStateException.class);
     }
 
+    /** v2 screenings read the lists, insert the result and write the outbox row in one transaction too. */
+    @Test
+    void computedFactsScreeningRunsInsideTheReadWriteTransaction() {
+        com.bank.compliance.domain.port.in.ComputedFactsScreeningCommand computed =
+                new com.bank.compliance.domain.port.in.ComputedFactsScreeningCommand("TX-V2", "C-1", new BigDecimal("10.00"), "AED",
+                        com.bank.compliance.domain.Attestation.computed("svc-pay-initiation-settlement"));
+        ComplianceResult result = ComplianceResultFixtures.result("TX-V2", "C-1", ComplianceDecision.PASS, List.of("COMPLIANT"));
+        when(delegate.screenWithComputedFacts(computed)).thenAnswer(inv -> {
+            assertThat(readWrite.active).as("delegate runs inside the transaction").isTrue();
+            return result;
+        });
+
+        assertThat(useCase.screenWithComputedFacts(computed)).isSameAs(result);
+        assertThat(readWrite.calls).isEqualTo(1);
+        assertThat(readOnly.calls).isZero();
+    }
+
     @Test
     void lookupsRunInTheReadOnlyTransaction() {
         when(delegate.findByTransactionId("TX-TX")).thenReturn(Optional.empty());

@@ -37,7 +37,11 @@ class ComplianceConfigurationTest {
         when(transactions.getTransaction(any())).thenReturn(new SimpleTransactionStatus());
 
         ComplianceScreeningUseCase useCase = configuration.complianceScreeningUseCase(
-                ruleService, new InMemoryComplianceResultRepository(), publisher, transactions);
+                ruleService, new InMemoryComplianceResultRepository(), publisher,
+                mock(com.bank.compliance.domain.port.out.CustomerProfilePort.class),
+                mock(com.bank.compliance.domain.port.out.NameScreeningPort.class),
+                configuration.listFreshnessPolicy(java.time.Duration.ofDays(1), java.time.Duration.ofDays(35)),
+                configuration.screeningClock(), transactions);
         ComplianceResult result = useCase.screen(
                 new ComplianceScreeningCommand("TX-CFG", "C-1", new BigDecimal("50.00"), "AED", false, true, false, com.bank.compliance.domain.ComplianceResultFixtures.PAYMENTS));
         useCase.findByTransactionId("TX-CFG");
@@ -47,5 +51,15 @@ class ComplianceConfigurationTest {
         verify(publisher).publish(any());
         verify(transactions).getTransaction(argThat((TransactionDefinition d) -> d != null && !d.isReadOnly()));
         verify(transactions).getTransaction(argThat((TransactionDefinition d) -> d != null && d.isReadOnly()));
+    }
+
+    /** The maximum list ages come from configuration (COMPLIANCE_LIST_MAX_AGE_SANCTIONS / _PEP) and the clock is UTC. */
+    @Test
+    void theFreshnessPolicyAndClockBeansFollowConfiguration() {
+        var policy = configuration.listFreshnessPolicy(java.time.Duration.parse("PT12H"), java.time.Duration.parse("P7D"));
+
+        assertThat(policy.maxAgeOf(com.bank.compliance.domain.ScreeningList.SANCTIONS)).isEqualTo(java.time.Duration.ofHours(12));
+        assertThat(policy.maxAgeOf(com.bank.compliance.domain.ScreeningList.PEP)).isEqualTo(java.time.Duration.ofDays(7));
+        assertThat(configuration.screeningClock().getZone()).isEqualTo(java.time.ZoneOffset.UTC);
     }
 }

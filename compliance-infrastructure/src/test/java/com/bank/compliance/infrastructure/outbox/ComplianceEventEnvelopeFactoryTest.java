@@ -30,8 +30,24 @@ class ComplianceEventEnvelopeFactoryTest {
 
     private static ComplianceScreenedEvent screened(ComplianceDecision decision, List<String> reasons) {
         return ComplianceResult.rehydrate(new ComplianceResultSnapshot(ComplianceResultId.of(SCREENING_ID),
-                "PAY-77", "C-42", ComplianceResultFixtures.facts(), decision, reasons, "cmp-screening-rules-v1", CHECKED_AT))
+                "PAY-77", "C-42", ComplianceResultFixtures.facts(), decision, reasons, "cmp-screening-rules-v1", CHECKED_AT, List.of()))
                 .screenedEvent();
+    }
+
+    /** A screening whose facts compliance computed publishes the same five data fields: no facts, amount or list data. */
+    @Test
+    void aComputedScreeningPublishesIdsDecisionAndTimeOnly() throws Exception {
+        ComplianceResult computed = ComplianceResult.rehydrate(new ComplianceResultSnapshot(ComplianceResultId.of(SCREENING_ID),
+                "PAY-79", "C-42",
+                new com.bank.compliance.domain.ScreeningFacts(new java.math.BigDecimal("12000.00"), "USD", true, true, true,
+                        com.bank.compliance.domain.Attestation.computed("svc-pay-initiation-settlement")),
+                ComplianceDecision.FAIL, List.of("SANCTIONS_HIT"), "cmp-screening-rules-v2", CHECKED_AT,
+                List.of(new com.bank.compliance.domain.ListVersion(com.bank.compliance.domain.ScreeningList.SANCTIONS, "UN", "2026-10-17", CHECKED_AT))));
+
+        JsonNode data = json.readTree(factory.toOutboxRow(computed.screenedEvent(), "corr-5").getPayload()).get("data");
+
+        assertThat(data.fieldNames()).toIterable().containsExactly("screeningId", "transactionId", "customerId", "decision", "checkedAt");
+        assertThat(data.toString()).doesNotContain("12000", "USD", "UN", "2026-10-17", "SANCTIONS_HIT", "COMPUTED");
     }
 
     @Test

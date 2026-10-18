@@ -60,8 +60,28 @@ class ComplianceEventsAsyncApiContractTest {
         assertThat((List<String>) path(dataSchema, "properties", "decision").get("enum"))
                 .containsExactlyInAnyOrder(names(ComplianceDecision.values()));
         assertThat(((Map<String, Object>) dataSchema.get("properties")).keySet())
-                .as("reason codes are restricted and stay out of the event contract")
-                .doesNotContain("reasons", "reasonCodes");
+                .as("reason codes, facts, amount and list data are restricted and stay out of the event contract")
+                .doesNotContain("reasons", "reasonCodes", "facts", "amount", "currency", "sanctionsHit", "pep", "kycVerified",
+                        "listVersions", "attestation", "attestedBy")
+                .containsExactlyInAnyOrder("screeningId", "transactionId", "customerId", "decision", "checkedAt");
+    }
+
+    /** A screening whose facts compliance computed (v2) publishes the same outcome-only payload. */
+    @Test
+    void aComputedScreeningPublishesTheOutcomeOnly() throws Exception {
+        Map<String, Object> contract = load("svc-cmp-evidence.yaml");
+        Map<String, Object> dataSchema = path(contract, "components", "schemas", "ComplianceScreenedData");
+        ComplianceResult computed = ComplianceResult.create("PAY-CT-2", "C-1",
+                new com.bank.compliance.domain.ScreeningFacts(new java.math.BigDecimal("12000.00"), "USD", true, true, true,
+                        com.bank.compliance.domain.Attestation.computed("svc-pay-initiation-settlement")),
+                ComplianceDecision.FAIL, List.of("SANCTIONS_HIT"), com.bank.compliance.domain.service.ComplianceRuleService.RULE_SET_VERSION,
+                List.of(new com.bank.compliance.domain.ListVersion(com.bank.compliance.domain.ScreeningList.SANCTIONS, "UN", "2026-10-17",
+                        java.time.Instant.parse("2026-10-18T01:00:00Z"))));
+
+        JsonNode data = json.readTree(new ComplianceEventEnvelopeFactory(json).toOutboxRow(computed.screenedEvent(), "corr-ct2").getPayload()).get("data");
+
+        assertThat(fieldNames(data)).containsExactlyInAnyOrderElementsOf((List<String>) dataSchema.get("required"));
+        assertThat(data.toString()).doesNotContain("12000", "USD", "SANCTIONS_HIT", "UN", "COMPUTED", "svc-pay");
     }
 
     /**

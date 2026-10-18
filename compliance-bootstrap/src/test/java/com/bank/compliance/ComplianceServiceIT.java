@@ -9,6 +9,7 @@ import com.bank.compliance.infrastructure.outbox.SpringDataOutboxRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -33,6 +34,7 @@ import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Duration;
@@ -53,6 +55,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -66,18 +69,35 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  */
 // The TLS startup assertions are on by default; the test database has no TLS, so the test
 // switch (test annotations only, never a shipped application*.yml) turns them off here.
-@SpringBootTest(properties = {"compliance.outbox.relay.enabled=false", "fintechbankx.tls.enforce=false"})
+// The deprecated v1 (caller-attested facts) is served here behind its flag; ComplianceV1RetiredIT covers the default.
+@SpringBootTest(properties = {"compliance.outbox.relay.enabled=false", "fintechbankx.tls.enforce=false",
+        "compliance.v1-caller-facts.enabled=true"})
 @AutoConfigureMockMvc
 class ComplianceServiceIT {
+
+    private static CustomerServiceStub customerService;
 
     @BeforeAll
     static void requireDatabase() {
         PostgresTestDatabase.assumeAvailable();
     }
 
+    @AfterAll
+    static void stopCustomerServiceStub() {
+        if (customerService != null) {
+            customerService.close();
+        }
+    }
+
     @DynamicPropertySource
-    static void database(DynamicPropertyRegistry registry) {
+    static void database(DynamicPropertyRegistry registry) throws IOException {
         PostgresTestDatabase.register(registry);
+        // v2 reads the name and KYC status from the customer context over HTTP with the service's own token.
+        customerService = CustomerServiceStub.start();
+        registry.add("compliance.customer.base-url", () -> customerService.baseUrl());
+        registry.add("compliance.identity.token-uri", () -> customerService.tokenUri());
+        registry.add("compliance.identity.client-id", () -> "svc-cmp-evidence");
+        registry.add("compliance.identity.client-secret", () -> "it-client-credential");
     }
 
     @Autowired MockMvc mvc;
@@ -92,6 +112,24 @@ class ComplianceServiceIT {
         // TRUNCATE as the migration owner: screening rows are insert-only (row-level DELETE is refused by a
         // trigger) and the runtime role the service connects as has no TRUNCATE.
         PostgresTestDatabase.owner().execute("truncate sc_cmp_evidence.outbox_event, sc_cmp_evidence.compliance_screening");
+        loadFreshLists();
+        customerService.clear();
+    }
+
+    /** Fresh list loads, as the operator script leaves them (dummy names only). */
+    private static void loadFreshLists() {
+        JdbcTemplate owner = PostgresTestDatabase.owner();
+        owner.execute("truncate sc_cmp_evidence.sanctions_list_entry, sc_cmp_evidence.pep_register_entry");
+        owner.update("""
+            insert into sc_cmp_evidence.sanctions_list_entry (normalized_name, display_name, list_source, list_version, loaded_at) values
+              ('TEST SANCTIONED PERSON', 'Test Sanctioned Pérson', 'UN', '2026-10-17', now() - interval '3 hours'),
+              ('TEST OFAC DUMMY', 'Test OFAC Dummy', 'OFAC-SDN', '1842', now() - interval '2 hours'),
+              ('TEST UAE LOCAL DUMMY', 'Test UAE-Local Dummy', 'UAE-LOCAL', '2026-10-18', now() - interval '1 hour')
+            """);
+        owner.update("""
+            insert into sc_cmp_evidence.pep_register_entry (normalized_name, display_name, list_source, list_version, loaded_at) values
+              ('TEST PEP PERSON', 'Test Pep Person', 'UAE-PEP', '2026-10', now() - interval '10 days')
+            """);
     }
 
     @Test
@@ -102,7 +140,257 @@ class ComplianceServiceIT {
             order by table_name
             """, String.class);
 
-        assertThat(tables).containsExactly("compliance_screening", "legacy_compliance_report", "outbox_event");
+        assertThat(tables).containsExactly("compliance_screening", "legacy_compliance_report", "outbox_event",
+            "pep_register_entry", "sanctions_list_entry");
+    }
+
+    // ---- v2: compliance computes sanctions, PEP and KYC from their owners ----
+
+    @Test
+    void v2ScreensWithFactsComputedFromTheCustomerAndTheListsAndPublishesTheOutcomeOnly() throws Exception {
+        customerService.customer("C-CLEAN", "Test", "Clean Person", "VERIFIED");
+
+        String response = screenV2("PAY-V2-CLEAN", "C-CLEAN", "12000.00", "USD")
+            .andExpect(status().isCreated())
+            .andExpect(header().string("x-fapi-interaction-id", "it-interaction-1"))
+            .andExpect(jsonPath("$.decision").value("PASS"))
+            .andExpect(jsonPath("$.reasons[0]").value("COMPLIANT"))
+            .andExpect(jsonPath("$.attestation").value("COMPUTED"))
+            .andExpect(jsonPath("$.attestedBy").value("svc-pay-initiation-settlement"))
+            .andExpect(jsonPath("$.listVersions.length()").value(4))
+            .andExpect(jsonPath("$.listVersions[?(@.list == 'SANCTIONS')].source", org.hamcrest.Matchers.containsInAnyOrder("UN", "OFAC-SDN", "UAE-LOCAL")))
+            .andExpect(jsonPath("$.listVersions[?(@.list == 'PEP')].version").value("2026-10"))
+            .andExpect(jsonPath("$.sanctionsHit").doesNotExist())
+            .andReturn().getResponse().getContentAsString();
+
+        // The customer context was read with the service's own token and the request's interaction id.
+        assertThat(customerService.lastAuthorization.get()).isEqualTo("Bearer " + CustomerServiceStub.TOKEN);
+        assertThat(customerService.lastInteractionId.get()).isEqualTo("it-interaction-1");
+        assertThat(customerService.lastTokenRequestBody.get()).contains("grant_type=client_credentials").contains("client_id=svc-cmp-evidence");
+
+        assertThat(jdbc.queryForMap("""
+                select sanctions_hit, kyc_verified, pep, attestation_source, attested_by, rule_set_version,
+                       jsonb_array_length(list_versions) as lists, list_versions::text as list_versions
+                from sc_cmp_evidence.compliance_screening where transaction_id = 'PAY-V2-CLEAN'
+                """))
+            .containsEntry("sanctions_hit", false).containsEntry("kyc_verified", true).containsEntry("pep", false)
+            .containsEntry("attestation_source", "COMPUTED").containsEntry("attested_by", "svc-pay-initiation-settlement")
+            .containsEntry("rule_set_version", "cmp-screening-rules-v2").containsEntry("lists", 4)
+            .hasEntrySatisfying("list_versions", v -> assertThat(v.toString()).contains("\"UN\"", "\"2026-10-17\"", "\"UAE-PEP\"", "\"loadedAt\""));
+
+        Map<String, Object> event = jdbc.queryForMap("""
+            select payload->'data'->>'decision' as decision,
+                   jsonb_exists(payload->'data', 'reasons') as has_reasons,
+                   jsonb_exists(payload->'data', 'reasonCodes') as has_reason_codes,
+                   jsonb_exists(payload->'data', 'facts') as has_facts,
+                   jsonb_exists(payload->'data', 'amount') as has_amount,
+                   jsonb_exists(payload->'data', 'listVersions') as has_list_versions,
+                   payload::text as payload
+            from sc_cmp_evidence.outbox_event
+            """);
+        assertThat(event).containsEntry("decision", "PASS").containsEntry("has_reasons", false).containsEntry("has_reason_codes", false)
+            .containsEntry("has_facts", false).containsEntry("has_amount", false).containsEntry("has_list_versions", false);
+        assertThat(event.get("payload").toString()).doesNotContain("12000", "USD", "sanctions", "kyc", "\"pep\"", "COMPUTED", "UN", "2026-10-17", "COMPLIANT");
+        assertThat(response).contains("COMPLIANT");
+    }
+
+    /** The list entry carries diacritics and a hyphen; the customer name is written differently. Both normalise to one value. */
+    @Test
+    void v2MatchesTheNormalisedNameAgainstTheSanctionsListAndFails() throws Exception {
+        customerService.customer("C-SANC", "tést", "Sanctioned-Person", "VERIFIED");
+
+        screenV2("PAY-V2-SANC", "C-SANC", "10.00", "USD")
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.decision").value("FAIL"))
+            .andExpect(jsonPath("$.reasons[0]").value("SANCTIONS_HIT"))
+            .andExpect(jsonPath("$.attestation").value("COMPUTED"));
+
+        assertThat(jdbc.queryForMap("select sanctions_hit, pep from sc_cmp_evidence.compliance_screening where transaction_id = 'PAY-V2-SANC'"))
+            .containsEntry("sanctions_hit", true).containsEntry("pep", false);
+        assertThat(jdbc.queryForObject("select payload->'data'->>'decision' from sc_cmp_evidence.outbox_event", String.class)).isEqualTo("FAIL");
+    }
+
+    @Test
+    void v2PepAndKycFactsComeFromTheRegisterAndTheCustomerContext() throws Exception {
+        customerService.customer("C-PEP", "Test", "Pep Person", "VERIFIED");
+        customerService.customer("C-PENDING", "Test", "Pending Person", "PENDING");
+
+        screenV2("PAY-V2-PEP", "C-PEP", "10000.01", "USD")
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.decision").value("REVIEW"))
+            .andExpect(jsonPath("$.reasons[0]").value("PEP_HIGH_VALUE_REVIEW"));
+        screenV2("PAY-V2-PEP-LOW", "C-PEP", "10000.00", "USD")
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.decision").value("PASS"));
+        screenV2("PAY-V2-PENDING", "C-PENDING", "10.00", "USD")
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.decision").value("FAIL"))
+            .andExpect(jsonPath("$.reasons[0]").value("KYC_NOT_VERIFIED"));
+
+        assertThat(jdbc.queryForMap("select pep, kyc_verified from sc_cmp_evidence.compliance_screening where transaction_id = 'PAY-V2-PEP'"))
+            .containsEntry("pep", true).containsEntry("kyc_verified", true);
+        assertThat(jdbc.queryForMap("select pep, kyc_verified from sc_cmp_evidence.compliance_screening where transaction_id = 'PAY-V2-PENDING'"))
+            .containsEntry("pep", false).containsEntry("kyc_verified", false);
+    }
+
+    /** Never PASS by default: a stale or empty list is a 503 and nothing is recorded or published. */
+    @Test
+    void v2StaleOrEmptyListsAreA503AndNothingIsStored() throws Exception {
+        customerService.customer("C-CLEAN", "Test", "Clean Person", "VERIFIED");
+        JdbcTemplate owner = PostgresTestDatabase.owner();
+
+        // One sanctions source older than COMPLIANCE_LIST_MAX_AGE_SANCTIONS (P1D) makes the whole list stale.
+        owner.update("update sc_cmp_evidence.sanctions_list_entry set loaded_at = now() - interval '25 hours' where list_source = 'OFAC-SDN'");
+        screenV2("PAY-V2-STALE", "C-CLEAN", "10.00", "USD")
+            .andExpect(status().isServiceUnavailable())
+            .andExpect(jsonPath("$.code").value("SCREENING_SOURCE_UNAVAILABLE"))
+            .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("sanctions list is stale")))
+            .andExpect(jsonPath("$.interactionId").value("it-interaction-1"));
+
+        // An empty PEP register.
+        loadFreshLists();
+        owner.execute("truncate sc_cmp_evidence.pep_register_entry");
+        screenV2("PAY-V2-EMPTY", "C-CLEAN", "10.00", "USD")
+            .andExpect(status().isServiceUnavailable())
+            .andExpect(jsonPath("$.code").value("SCREENING_SOURCE_UNAVAILABLE"))
+            .andExpect(jsonPath("$.message").value("The PEP register is empty"));
+
+        // A PEP register older than COMPLIANCE_LIST_MAX_AGE_PEP (P35D).
+        loadFreshLists();
+        owner.update("update sc_cmp_evidence.pep_register_entry set loaded_at = now() - interval '36 days'");
+        screenV2("PAY-V2-OLD-PEP", "C-CLEAN", "10.00", "USD")
+            .andExpect(status().isServiceUnavailable())
+            .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("PEP register is stale")));
+
+        assertThat(jdbc.queryForObject("select count(*) from sc_cmp_evidence.compliance_screening", Integer.class)).isZero();
+        assertThat(outboxRows()).isZero();
+    }
+
+    @Test
+    void v2UnknownCustomerIsA422AndAFailingCustomerServiceIsA503NothingStored() throws Exception {
+        screenV2("PAY-V2-NOCUST", "C-UNKNOWN", "10.00", "USD")
+            .andExpect(status().isUnprocessableEntity())
+            .andExpect(jsonPath("$.code").value("CUSTOMER_NOT_FOUND"))
+            .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("C-UNKNOWN"))));
+
+        customerService.customer("C-CLEAN", "Test", "Clean Person", "VERIFIED");
+        customerService.failNextWith(500);
+        screenV2("PAY-V2-DOWN", "C-CLEAN", "10.00", "USD")
+            .andExpect(status().isServiceUnavailable())
+            .andExpect(jsonPath("$.code").value("SCREENING_SOURCE_UNAVAILABLE"))
+            .andExpect(jsonPath("$.message").value("The customer profile service answered HTTP 500"));
+
+        assertThat(jdbc.queryForObject("select count(*) from sc_cmp_evidence.compliance_screening", Integer.class)).isZero();
+        assertThat(outboxRows()).isZero();
+    }
+
+    @Test
+    void v2ReplayReturnsTheStoredResultAndAConflictingReplayIsRefused() throws Exception {
+        customerService.customer("C-PEP", "Test", "Pep Person", "VERIFIED");
+        String first = screenV2("PAY-V2-REPLAY", "C-PEP", "12000.00", "USD")
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.decision").value("REVIEW"))
+            .andReturn().getResponse().getContentAsString();
+
+        // The replay is answered from the evidence: the lists are not consulted again, even stale or empty.
+        PostgresTestDatabase.owner().execute("truncate sc_cmp_evidence.sanctions_list_entry");
+        customerService.clear();
+        String replay = screenV2("PAY-V2-REPLAY", "C-PEP", "12000", "USD")
+            .andExpect(status().isCreated())
+            .andReturn().getResponse().getContentAsString();
+        assertThat(replay).isEqualTo(first);
+
+        screenV2("PAY-V2-REPLAY", "C-PEP", "12000.01", "USD")
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("TRANSACTION_ALREADY_SCREENED"));
+        screenV2("PAY-V2-REPLAY", "C-PEP", "12000.00", "AED")
+            .andExpect(status().isConflict());
+        screenV2("PAY-V2-REPLAY", "C-OTHER", "12000.00", "USD")
+            .andExpect(status().isConflict());
+        // Another requester for the same transaction is not handed the stored result.
+        mvc.perform(post("/api/v2/compliance/screen").with(officer())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(bodyV2("PAY-V2-REPLAY", "C-PEP", "12000.00", "USD")))
+            .andExpect(status().isConflict());
+
+        assertThat(jdbc.queryForObject("select count(*) from sc_cmp_evidence.compliance_screening", Integer.class)).isEqualTo(1);
+        assertThat(outboxRows()).isEqualTo(1);
+    }
+
+    /** A transaction screened on v1 (caller-attested) is not replayable on v2, and the other way round. */
+    @Test
+    void v1AndV2ResultsForOneTransactionDoNotMix() throws Exception {
+        customerService.customer("C-1", "Test", "Clean Person", "VERIFIED");
+        screen("PAY-MIX-1", "C-1", "10.00", false, true, false).andExpect(status().isCreated());
+        screenV2("PAY-MIX-1", "C-1", "10.00", "USD")
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("TRANSACTION_ALREADY_SCREENED"));
+
+        screenV2("PAY-MIX-2", "C-1", "10.00", "USD").andExpect(status().isCreated());
+        screen("PAY-MIX-2", "C-1", "10.00", false, true, false)
+            .andExpect(status().isConflict());
+
+        assertThat(jdbc.queryForObject("select count(*) from sc_cmp_evidence.compliance_screening", Integer.class)).isEqualTo(2);
+    }
+
+    @Test
+    void v2CallerStatedFactsAreRefusedWithA400() throws Exception {
+        customerService.customer("C-1", "Test", "Clean Person", "VERIFIED");
+
+        mvc.perform(asService(post("/api/v2/compliance/screen"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"transactionId": "PAY-V2-OLD-SHAPE", "customerId": "C-1", "amount": 10.00, "currency": "USD", "sanctionsHit": false}
+                    """))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+            .andExpect(jsonPath("$.message").value("sanctionsHit is not accepted: compliance computes it"));
+        assertThat(jdbc.queryForObject("select count(*) from sc_cmp_evidence.compliance_screening", Integer.class)).isZero();
+    }
+
+    /** The lists are loaded by the operator script as the owner; the service only reads them. */
+    @Test
+    void theRuntimeRoleOnlyReadsTheScreeningLists() {
+        JdbcTemplate runtime = PostgresTestDatabase.runtime();
+
+        assertThat(runtime.queryForObject("select count(*) from sc_cmp_evidence.sanctions_list_entry", Integer.class)).isEqualTo(3);
+        assertThat(runtime.queryForObject("select count(*) from sc_cmp_evidence.pep_register_entry", Integer.class)).isEqualTo(1);
+        for (String table : List.of("sanctions_list_entry", "pep_register_entry")) {
+            assertThatThrownBy(() -> runtime.update("insert into sc_cmp_evidence." + table
+                    + " (normalized_name, display_name, list_source, list_version, loaded_at) values ('TEST PLANTED', 'Test Planted', 'X', '1', now())"))
+                .rootCause().hasMessageContaining("permission denied for table " + table);
+            assertThatThrownBy(() -> runtime.update("delete from sc_cmp_evidence." + table))
+                .rootCause().hasMessageContaining("permission denied for table " + table);
+            assertThatThrownBy(() -> runtime.update("update sc_cmp_evidence." + table + " set loaded_at = now()"))
+                .rootCause().hasMessageContaining("permission denied for table " + table);
+            assertThatThrownBy(() -> runtime.execute("truncate sc_cmp_evidence." + table))
+                .rootCause().hasMessageContaining("permission denied for table " + table);
+        }
+    }
+
+    /** The schema is unreleased: COMPUTED rows must carry list versions, enforced by a validated check. */
+    @Test
+    void aComputedRowWithoutListVersionsIsRefusedByTheDatabase() {
+        assertThatThrownBy(() -> PostgresTestDatabase.owner().update("""
+                insert into sc_cmp_evidence.compliance_screening
+                    (screening_id, transaction_id, customer_id, amount, currency, sanctions_hit, kyc_verified, pep,
+                     attestation_source, attested_by, decision, reasons, rule_set_version, checked_at, list_versions)
+                values ('CMP-no-lists', 'PAY-NO-LISTS', 'C-1', 10.00, 'USD', false, true, false,
+                        'COMPUTED', 'svc-pay-initiation-settlement', 'PASS', '["COMPLIANT"]'::jsonb, 'cmp-screening-rules-v2', now(), '[]'::jsonb)
+                """))
+            .rootCause().hasMessageContaining("ck_compliance_screening_computed_lists");
+    }
+
+    private ResultActions screenV2(String transactionId, String customerId, String amount, String currency) throws Exception {
+        return mvc.perform(asService(post("/api/v2/compliance/screen"))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(bodyV2(transactionId, customerId, amount, currency)));
+    }
+
+    private static String bodyV2(String transactionId, String customerId, String amount, String currency) {
+        return """
+            {"transactionId": "%s", "customerId": "%s", "amount": %s, "currency": "%s"}
+            """.formatted(transactionId, customerId, amount, currency);
     }
 
     /** The schema is unreleased: no NULL-tolerant compatibility path, every check validated. */
@@ -163,12 +451,16 @@ class ComplianceServiceIT {
                    jsonb_exists(payload->'data', 'reasons') as has_reasons,
                    jsonb_exists(payload->'data', 'reasonCodes') as has_reason_codes,
                    jsonb_exists(payload->'data', 'amount') as has_amount,
+                   jsonb_exists(payload->'data', 'facts') as has_facts,
+                   jsonb_exists(payload->'data', 'listVersions') as has_list_versions,
                    published_at
             from sc_cmp_evidence.outbox_event
             """);
         assertThat(rows).hasSize(1);
         Map<String, Object> row = rows.getFirst();
-        assertThat(row).containsEntry("topic", "evt.cmp.compliance.v1")
+        assertThat(row.keySet()).contains("has_facts", "has_list_versions");
+        assertThat(row).containsEntry("has_facts", false).containsEntry("has_list_versions", false)
+            .containsEntry("topic", "evt.cmp.compliance.v1")
             .containsEntry("event_type", "Compliance.ComplianceScreening.Screened.v1")
             .containsEntry("payload_event_type", "Compliance.ComplianceScreening.Screened.v1")
             .containsEntry("producer", "svc-cmp-evidence")
