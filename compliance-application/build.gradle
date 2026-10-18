@@ -3,8 +3,9 @@ apply plugin: 'jacoco'
 description = 'Compliance Application - Use cases for screening orchestration'
 
 dependencies {
-    api project(':compliance-context:compliance-domain')
+    api project(':compliance-domain')
 
+    testImplementation testFixtures(project(':compliance-domain'))
     testImplementation libs.junit.jupiter
     testImplementation libs.assertj.core
     testImplementation libs.mockito.core

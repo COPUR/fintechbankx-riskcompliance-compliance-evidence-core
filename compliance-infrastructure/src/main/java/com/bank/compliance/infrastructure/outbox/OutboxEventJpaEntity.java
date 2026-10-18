@@ -1,0 +1,126 @@
+package com.bank.compliance.infrastructure.outbox;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
+import java.time.Instant;
+import java.util.UUID;
+
+/**
+ * Row of sc_cmp_evidence.outbox_event: one envelope waiting to be
+ * relayed to Kafka. Written in the same transaction as the screening result.
+ */
+@Entity
+@Table(name = "outbox_event")
+public class OutboxEventJpaEntity {
+
+    static final int MAX_ERROR_LENGTH = 500;
+
+    @Id
+    @Column(name = "event_id")
+    private UUID eventId;
+
+    @Column(name = "aggregate_type", nullable = false, length = 64, updatable = false)
+    private String aggregateType;
+
+    @Column(name = "aggregate_id", nullable = false, length = 64, updatable = false)
+    private String aggregateId;
+
+    @Column(name = "aggregate_version", nullable = false, updatable = false)
+    private long aggregateVersion;
+
+    @Column(name = "event_type", nullable = false, length = 128, updatable = false)
+    private String eventType;
+
+    @Column(name = "topic", nullable = false, length = 249, updatable = false)
+    private String topic;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "payload", nullable = false, updatable = false, columnDefinition = "jsonb")
+    private String payload;
+
+    @Column(name = "correlation_id", nullable = false, length = 128, updatable = false)
+    private String correlationId;
+
+    @Column(name = "traceparent", length = 55, updatable = false)
+    private String traceparent;
+
+    @Column(name = "occurred_at", nullable = false, updatable = false)
+    private Instant occurredAt;
+
+    @Column(name = "published_at")
+    private Instant publishedAt;
+
+    @Column(name = "first_failed_at")
+    private Instant firstFailedAt;
+
+    @Column(name = "parked_at")
+    private Instant parkedAt;
+
+    /** The parked-events counter has counted this park (V10). */
+    @Column(name = "park_counted", nullable = false)
+    private boolean parkCounted;
+
+    @Column(name = "attempts", nullable = false)
+    private int attempts;
+
+    @Column(name = "last_error", length = 512)
+    private String lastError;
+
+    protected OutboxEventJpaEntity() {
+    }
+
+    public OutboxEventJpaEntity(UUID eventId, String aggregateType, String aggregateId, long aggregateVersion,
+                                String eventType, String topic, String payload, String correlationId,
+                                String traceparent, Instant occurredAt) {
+        this.eventId = eventId;
+        this.aggregateType = aggregateType;
+        this.aggregateId = aggregateId;
+        this.aggregateVersion = aggregateVersion;
+        this.eventType = eventType;
+        this.topic = topic;
+        this.payload = payload;
+        this.correlationId = correlationId;
+        this.traceparent = traceparent;
+        this.occurredAt = occurredAt;
+    }
+
+    public UUID getEventId() { return eventId; }
+    public String getAggregateType() { return aggregateType; }
+    public String getAggregateId() { return aggregateId; }
+    public long getAggregateVersion() { return aggregateVersion; }
+    public String getEventType() { return eventType; }
+    public String getTopic() { return topic; }
+    public String getPayload() { return payload; }
+    public String getCorrelationId() { return correlationId; }
+    public String getTraceparent() { return traceparent; }
+    public Instant getOccurredAt() { return occurredAt; }
+    public Instant getPublishedAt() { return publishedAt; }
+    public Instant getParkedAt() { return parkedAt; }
+    public Instant getFirstFailedAt() { return firstFailedAt; }
+    public int getAttempts() { return attempts; }
+    public boolean isParkCounted() { return parkCounted; }
+    public String getLastError() { return lastError; }
+
+    void markPublished(Instant at) {
+        this.publishedAt = at;
+        this.attempts++;
+        this.lastError = null;
+    }
+
+    /** A payload failure (the row is parked next). first_failed_at (V8) is no longer written. */
+    void markFailed(String error) {
+        this.attempts++;
+        this.lastError = error == null ? null : error.substring(0, Math.min(error.length(), MAX_ERROR_LENGTH));
+    }
+
+    /** The relay gave up on this row; it stays unpublished until it is un-parked by hand. */
+    void markParked(Instant at) {
+        this.parkedAt = at;
+        this.parkCounted = true;
+    }
+}

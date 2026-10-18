@@ -1,0 +1,9 @@
+display_name,expected_normalized
+Test Sanctioned Pérson,TEST SANCTIONED PERSON
+"  tEst   Ünïcode-Näme ",TEST UNICODE NAME
+"Test O'Dummy, Jr.",TEST O DUMMY JR
+Łukasz Test-Fixture,ŁUKASZ TEST FIXTURE
+Test Ñandú Pep-Dummy,TEST NANDU PEP DUMMY
+Test Straße Dummy,TEST STRASSE DUMMY
+test   clean    person,TEST CLEAN PERSON
+Tëst Çédille Ångström-Dummy,TEST CEDILLE ANGSTROM DUMMY

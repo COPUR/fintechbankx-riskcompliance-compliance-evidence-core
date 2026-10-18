@@ -2,14 +2,158 @@ openapi: 3.0.3
 info:
   title: Compliance Context Service API
   version: 1.0.0
-  description: Compliance screening APIs.
+  description: >-
+    Compliance screening APIs. v2 screens with facts computed by compliance;
+    v1 (caller-attested facts) is deprecated and served only behind
+    COMPLIANCE_V1_CALLER_FACTS_ENABLED.
 servers:
   - url: https://api.sandbox.openfinance.ae
 paths:
+  /api/v2/compliance/screen:
+    post:
+      summary: Run compliance screening (facts computed by compliance)
+      operationId: screenComplianceComputed
+      description: |-
+        Screens once per transactionId. The caller sends the transaction and
+        customer ids, the amount and the currency only; compliance resolves the
+        facts itself: the customer's name and KYC status from the customer
+        context (svc-cus-profile-kyc, GET /api/v1/customers/{id}/screening-profile,
+        which carries only those fields), the sanctions
+        and PEP flags by matching the customer's normalised full name against
+        the compliance-owned sanctions list and PEP register. The decision, the
+        facts, the rule set version, the requester and the list loads the facts
+        were matched against (`listVersions`) are stored as insert-only
+        evidence with `attestation` COMPUTED.
+
+        A fact that cannot be resolved is a 503 SCREENING_SOURCE_UNAVAILABLE
+        and nothing is recorded: the customer context unreachable, refusing or
+        failing, a list empty or missing one of its required sources
+        (COMPLIANCE_SANCTIONS_REQUIRED_SOURCES, COMPLIANCE_PEP_REQUIRED_SOURCES),
+        or a list source loaded longer ago than
+        COMPLIANCE_LIST_MAX_AGE_SANCTIONS (default P1D) or
+        COMPLIANCE_LIST_MAX_AGE_PEP (default P35D). The screening never passes
+        by default; retry later. A customer the customer context does not know
+        is a 422 CUSTOMER_NOT_FOUND (a definite answer; do not retry).
+
+        Known limitation (Proposed, to confirm by Group Compliance before
+        cut-over; not a compliance claim): the match is an exact comparison of
+        the normalised first and last name (upper case, letters and digits,
+        single spaces) in FIRST LAST order. A list entry written "LAST, FIRST",
+        a middle name on one side only, an alias or another transliteration
+        is not matched.
+
+        A replay (same transactionId, customer, amount by value, currency and
+        requester) returns the stored result without consulting any source
+        again; the same transactionId for another customer, amount, currency
+        or requester is a 409 TRANSACTION_ALREADY_SCREENED. A concurrent first
+        screening of the same transaction may get a 409 DUPLICATE_REQUEST;
+        retrying returns the stored result. Results are read with
+        GET /api/v1/compliance/screenings/{transactionId}.
+      security:
+        - bearerAuth: []
+          dpopAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/DPoP'
+        - $ref: '#/components/parameters/InteractionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ComputedScreeningRequest'
+      responses:
+        '201':
+          description: Compliance result created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComplianceScreeningResponse'
+        '400':
+          description: >-
+            INVALID_REQUEST: a missing or invalid field, or a caller-stated
+            fact (sanctionsHit, kycVerified, pep), which v2 does not accept.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: >-
+            TRANSACTION_ALREADY_SCREENED (transactionId already screened for
+            another customer, amount, currency or requester; the message
+            carries no ids) or DUPLICATE_REQUEST (a concurrent screening of
+            the same transaction won; retry).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: >-
+            CUSTOMER_NOT_FOUND: the customer context has no customer with this
+            id. A definite answer, not an outage; nothing is recorded. The
+            message carries no ids.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: INTERNAL_ERROR; the screening could not be stored.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: >-
+            SCREENING_SOURCE_UNAVAILABLE: a fact could not be resolved (the
+            customer context unreachable, refusing or failing; the sanctions
+            list or PEP register empty, missing a required source or stale;
+            no service credential).
+            Nothing is recorded; never a PASS by default. Retry later. The
+            message names the source only.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /api/v1/compliance/screen:
     post:
-      summary: Run compliance screening
+      summary: Run compliance screening with caller-attested facts (deprecated)
       operationId: screenCompliance
+      deprecated: true
+      x-sunset: '2027-06-30'
+      description: |-
+        Deprecated: the caller states the sanctions, PEP and KYC facts itself.
+        Use POST /api/v2/compliance/screen, where compliance computes them.
+        This operation is served while the service runs with
+        COMPLIANCE_V1_CALLER_FACTS_ENABLED=true (the default until payments has
+        moved to v2); with "false" it answers 410 ENDPOINT_GONE and names
+        /api/v2/compliance/screen. The sunset date is Proposed (Group
+        Compliance and payments to confirm before cut-over); payments' move to
+        v2 sets the real one.
+
+        Screens once per transactionId and stores the decision with the facts it
+        was made on (amount, currency, sanctions/KYC/PEP flags, rule set
+        version) and the caller who stated them as insert-only evidence. A
+        replay (same customer, the same facts, the same caller) returns the
+        stored result; the same transactionId for another customer, with any
+        different fact or from another caller is a 409
+        TRANSACTION_ALREADY_SCREENED.
+        A concurrent first screening of the same transaction may get a 409
+        DUPLICATE_REQUEST; retrying returns the stored result.
+
+        The flags and amount are attested by the caller: the service does not
+        look them up on this operation (see `attestation` on the response).
       security:
         - bearerAuth: []
           dpopAuth: []
@@ -30,6 +174,49 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ComplianceScreeningResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: >-
+            TRANSACTION_ALREADY_SCREENED (transactionId already screened for
+            another customer, with different facts or by a different caller;
+            the message carries no ids) or DUPLICATE_REQUEST (a
+            concurrent screening of the same transaction won; retry).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '410':
+          description: >-
+            ENDPOINT_GONE: the service runs with
+            COMPLIANCE_V1_CALLER_FACTS_ENABLED=false (set after payments moved
+            to v2). Use POST /api/v2/compliance/screen.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: INTERNAL_ERROR; the screening could not be stored.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /api/v1/compliance/screenings/{transactionId}:
     get:
       summary: Find compliance result by transaction id
@@ -49,8 +236,24 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ComplianceScreeningResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '404':
-          description: Not found
+          description: No screening result for this transaction
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
 components:
   securitySchemes:
@@ -72,7 +275,14 @@ components:
     DPoP:
       name: DPoP
       in: header
-      required: true
+      required: false
+      description: >-
+        DPoP proof. Not required and not verified by this service: per the
+        platform contract addendum (2026-10-08) DPoP binding applies only to
+        open-finance TPP clients, and this API is called by internal services
+        (client-credentials Bearer tokens, bound by mesh mTLS) and compliance
+        staff (Bearer tokens). Tokens must carry aud svc-cmp-evidence; SERVICE
+        callers must also be on the azp allow-list.
       schema:
         type: string
     InteractionId:
@@ -90,21 +300,93 @@ components:
   schemas:
     ComplianceScreeningRequest:
       type: object
-      required: [transactionId, customerId, amount]
+      required: [transactionId, customerId, amount, currency, sanctionsHit, kycVerified, pep]
       properties:
         transactionId:
           type: string
+          description: Caller's id of the screened transaction, at most 128 characters.
         customerId:
           type: string
+          description: Customer id, at most 128 characters.
         amount:
           type: number
           format: double
+          description: >-
+            Positive amount with at most 15 integer digits and 4 decimal places
+            (stored as NUMERIC(19,4)); otherwise 400 INVALID_REQUEST.
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+          description: >-
+            ISO 4217 code of the amount, upper case. Required: omitted or null
+            is a 400 INVALID_REQUEST; the service never assumes a currency.
         sanctionsHit:
           type: boolean
+          description: >-
+            Caller-attested sanctions screening hit. Required: omitted or null
+            is a 400 INVALID_REQUEST, never recorded as false.
         kycVerified:
           type: boolean
+          description: >-
+            Caller-attested KYC verification. Required: omitted or null is a
+            400 INVALID_REQUEST, never recorded as false.
         pep:
           type: boolean
+          description: >-
+            Caller-attested politically exposed person flag. Required: omitted
+            or null is a 400 INVALID_REQUEST, never recorded as false.
+    ComputedScreeningRequest:
+      type: object
+      description: >-
+        Screening request for POST /api/v2/compliance/screen. No screening fact
+        is accepted from the caller: a body carrying sanctionsHit, kycVerified
+        or pep is a 400 INVALID_REQUEST.
+      required: [transactionId, customerId, amount, currency]
+      additionalProperties: false
+      properties:
+        transactionId:
+          type: string
+          description: Caller's id of the screened transaction, at most 128 characters.
+        customerId:
+          type: string
+          description: >-
+            Customer id in the customer context (svc-cus-profile-kyc), at most
+            128 characters; compliance reads the name and KYC status for it.
+        amount:
+          type: number
+          format: double
+          description: >-
+            Positive amount with at most 15 integer digits and 4 decimal places
+            (stored as NUMERIC(19,4)); otherwise 400 INVALID_REQUEST.
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+          description: >-
+            ISO 4217 code of the amount, upper case. Required: omitted or null
+            is a 400 INVALID_REQUEST; the service never assumes a currency.
+    ListVersion:
+      type: object
+      description: One source load of a screening list the facts were matched against.
+      required: [list, source, version, loadedAt]
+      properties:
+        list:
+          type: string
+          description: SANCTIONS or PEP. Further lists may be added; consumers must accept values they do not know.
+          example: SANCTIONS
+        source:
+          type: string
+          maxLength: 64
+          description: Publisher of the list as loaded by compliance operations, for example UN, OFAC-SDN, a local list.
+          example: UN
+        version:
+          type: string
+          maxLength: 128
+          description: The publisher's version or date of the load.
+          example: '2026-10-17'
+        loadedAt:
+          type: string
+          format: date-time
+          description: When compliance operations loaded this source (UTC).
     ComplianceScreeningResponse:
       type: object
       required: [screeningId, transactionId, customerId, decision, reasons, checkedAt]
@@ -120,8 +402,57 @@ components:
           enum: [PASS, REVIEW, FAIL]
         reasons:
           type: array
+          description: >-
+            Rule reason codes, for example SANCTIONS_HIT, KYC_NOT_VERIFIED,
+            PEP_HIGH_VALUE_REVIEW, UNSUPPORTED_CURRENCY (a PEP screening in a
+            currency with no high-value threshold; USD is the only configured
+            currency today) and COMPLIANT. Consumers must accept codes they do
+            not know.
           items:
             type: string
         checkedAt:
+          type: string
+          format: date-time
+        attestation:
+          type: string
+          description: >-
+            Where the screening facts came from. COMPUTED (v2): compliance
+            resolved the sanctions and PEP flags from its own lists and the KYC
+            status from the customer context; `listVersions` names the loads.
+            CALLER_ATTESTED (deprecated v1): the sanctions, PEP and KYC flags
+            and the amount were stated by the calling service and not verified
+            by compliance. STAFF_ATTESTED (deprecated v1): stated by a
+            compliance officer or administrator screening by hand. Further
+            values may be added; consumers must accept values they do not know.
+          example: COMPUTED
+        attestedBy:
+          type: string
+          maxLength: 128
+          description: >-
+            Who stated the facts (v1) or requested the computed screening (v2),
+            from the caller's verified token: the client id (azp) of the
+            calling service, or the user id (sub) of the staff member. A replay
+            of the same transaction must come from the same caller; another
+            caller gets 409 TRANSACTION_ALREADY_SCREENED.
+          example: svc-pay-initiation-settlement
+        listVersions:
+          type: array
+          description: >-
+            The list loads a COMPUTED screening was matched against (every
+            source of the sanctions list, then of the PEP register); empty for
+            caller-attested facts. Not published on events.
+          items:
+            $ref: '#/components/schemas/ListVersion'
+    ErrorResponse:
+      type: object
+      required: [code, message, interactionId, timestamp]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        interactionId:
+          type: string
+        timestamp:
           type: string
           format: date-time

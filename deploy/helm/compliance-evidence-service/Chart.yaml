@@ -1,0 +1,9 @@
+apiVersion: v2
+name: compliance-evidence-service
+description: "svc-cmp-evidence, compliance screening decisions and regulatory report evidence."
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+annotations:
+  fintechbankx.io/service-id: svc-cmp-evidence
+  fintechbankx.io/owning-squad: Compliance Evidence Squad
