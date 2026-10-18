@@ -14,11 +14,14 @@ import com.bank.compliance.domain.port.in.ComplianceScreeningUseCase;
 import com.bank.compliance.domain.port.in.ComputedFactsScreeningCommand;
 import com.bank.compliance.domain.service.ComplianceRuleService;
 import com.bank.compliance.infrastructure.config.ServiceCallerPolicy;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.http.MediaType;
+import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
+import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
@@ -59,6 +62,9 @@ class ComplianceScreeningV2ControllerTest {
         service = mock(ComplianceScreeningUseCase.class);
         mockMvc = MockMvcBuilders.standaloneSetup(new ComplianceScreeningV2Controller(service,
                         new CallerAttestation(new ServiceCallerPolicy("svc-pay-initiation-settlement"))))
+                // Dates as ISO-8601 strings, as Spring Boot's JacksonAutoConfiguration writes them in the running service.
+                .setMessageConverters(new MappingJackson2HttpMessageConverter(Jackson2ObjectMapperBuilder.json()
+                        .featuresToDisable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS).build()))
                 .setControllerAdvice(new ApiExceptionHandler())
                 .defaultRequest(get("/").principal(token("service-account-uuid", "svc-pay-initiation-settlement", "SERVICE")))
                 .build();

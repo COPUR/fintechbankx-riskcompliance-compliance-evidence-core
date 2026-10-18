@@ -136,6 +136,7 @@ class CustomerProfileHttpAdapterTest {
                 .hasMessage("The customer profile service answered with an unknown KYC status");
 
         // A profile without kycStatus (an older customer release, or a caller the customer context does not show it to).
+        server.reset();
         server.expect(requestTo(BASE + "/api/v1/customers/C-1"))
                 .andRespond(withSuccess(PROFILE.replace("\"kycStatus\":\"VERIFIED\",", ""), MediaType.APPLICATION_JSON));
         assertThatThrownBy(() -> adapter.findCustomer("C-1"))

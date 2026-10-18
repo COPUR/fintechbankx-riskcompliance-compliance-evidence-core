@@ -14,8 +14,9 @@ import java.util.Set;
  * Who attests the facts of a screening request, from the caller's verified
  * token: a listed SERVICE client attests as CALLER_ATTESTED under its azp;
  * compliance staff (COMPLIANCE_OFFICER, ADMIN) as STAFF_ATTESTED under the
- * token's sub, the Keycloak user id. The principal name and any customer_id
- * claim are not used.
+ * token's sub, the Keycloak user id. For a computed-facts screening (v2) the
+ * same identity is recorded as the requester of a COMPUTED attestation. The
+ * principal name and any customer_id claim are not used.
  */
 @Component
 public class CallerAttestation {
@@ -28,6 +29,7 @@ public class CallerAttestation {
         this.serviceCallers = serviceCallers;
     }
 
+    /** The caller as the attester of facts it states itself (v1). */
     public Attestation of(Authentication authentication) {
         if (!(authentication instanceof JwtAuthenticationToken token)) {
             throw new AccessDeniedException("A screening needs an authenticated caller");
@@ -39,6 +41,11 @@ public class CallerAttestation {
             return Attestation.byStaff(token.getToken().getSubject());
         }
         throw new AccessDeniedException("This caller may not attest screening facts");
+    }
+
+    /** The caller as the requester of a screening whose facts compliance computes (v2). */
+    public Attestation requesterOf(Authentication authentication) {
+        return Attestation.computed(of(authentication).attestedBy());
     }
 
     private static boolean hasAny(Authentication authentication, Set<String> roles) {

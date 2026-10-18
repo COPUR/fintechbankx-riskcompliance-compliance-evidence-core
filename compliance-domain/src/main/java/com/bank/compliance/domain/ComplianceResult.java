@@ -1,5 +1,7 @@
 package com.bank.compliance.domain;
 
+import com.bank.compliance.domain.port.in.ComputedFactsScreeningCommand;
+
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
@@ -8,8 +10,9 @@ import java.util.UUID;
 
 /**
  * The recorded outcome of screening one transaction: the decision, its
- * reasons, the facts it was made on and the rule set that made it. Evidence:
- * written once, never changed.
+ * reasons, the facts it was made on, where they came from, the rule set that
+ * made it and, for facts compliance computed, the list loads they were
+ * matched against. Evidence: written once, never changed.
  */
 public final class ComplianceResult {
     private final ComplianceResultId id;
@@ -20,6 +23,7 @@ public final class ComplianceResult {
     private final List<String> reasons;
     private final String ruleSetVersion;
     private final Instant checkedAt;
+    private final List<ListVersion> listVersions;
 
     private ComplianceResult(
             ComplianceResultId id,
@@ -29,7 +33,8 @@ public final class ComplianceResult {
             ComplianceDecision decision,
             List<String> reasons,
             String ruleSetVersion,
-            Instant checkedAt
+            Instant checkedAt,
+            List<ListVersion> listVersions
     ) {
         this.id = Objects.requireNonNull(id, "id is required");
         if (transactionId == null || transactionId.isBlank()) {
@@ -48,8 +53,10 @@ public final class ComplianceResult {
         this.decision = Objects.requireNonNull(decision, "decision is required");
         this.reasons = List.copyOf(Objects.requireNonNull(reasons, "reasons are required"));
         this.checkedAt = Objects.requireNonNull(checkedAt, "checkedAt is required");
+        this.listVersions = List.copyOf(Objects.requireNonNull(listVersions, "listVersions are required"));
     }
 
+    /** A screening on caller-attested facts (v1): no list was consulted. */
     public static ComplianceResult create(
             String transactionId,
             String customerId,
@@ -57,6 +64,19 @@ public final class ComplianceResult {
             ComplianceDecision decision,
             List<String> reasons,
             String ruleSetVersion
+    ) {
+        return create(transactionId, customerId, facts, decision, reasons, ruleSetVersion, List.of());
+    }
+
+    /** @param listVersions the list loads the facts were matched against (computed facts) */
+    public static ComplianceResult create(
+            String transactionId,
+            String customerId,
+            ScreeningFacts facts,
+            ComplianceDecision decision,
+            List<String> reasons,
+            String ruleSetVersion,
+            List<ListVersion> listVersions
     ) {
         return new ComplianceResult(
                 ComplianceResultId.generate(),
@@ -68,7 +88,8 @@ public final class ComplianceResult {
                 ruleSetVersion,
                 // Microseconds: the precision the evidence is stored with, so a retry
                 // returns exactly the timestamp the first response carried.
-                Instant.now().truncatedTo(ChronoUnit.MICROS)
+                Instant.now().truncatedTo(ChronoUnit.MICROS),
+                listVersions
         );
     }
 
@@ -86,7 +107,8 @@ public final class ComplianceResult {
                 snapshot.decision(),
                 snapshot.reasons(),
                 snapshot.ruleSetVersion(),
-                snapshot.checkedAt()
+                snapshot.checkedAt(),
+                snapshot.listVersions()
         );
     }
 
@@ -104,8 +126,22 @@ public final class ComplianceResult {
     }
 
     /**
+     * True when a repeated computed-facts request (v2) is a replay of this
+     * recorded computed screening: same customer, same amount by value and
+     * currency, and the same requester. The flags are not the caller's to
+     * repeat, so they are not compared; a result whose facts were stated by a
+     * caller (v1) is never a replay of a computed request.
+     */
+    public boolean isReplayOf(ComputedFactsScreeningCommand command) {
+        return customerId.equals(command.customerId())
+                && facts.screenedAmount().sameValueAs(command.screenedAmount())
+                && facts.attestation().equals(command.requestedBy());
+    }
+
+    /**
      * The fact that this screening was made, for publication after the result
-     * is first stored. The event occurred when the screening was checked.
+     * is first stored. The event occurred when the screening was checked. It
+     * carries the outcome only: no facts, amount or list data.
      */
     public ComplianceScreenedEvent screenedEvent() {
         return new ComplianceScreenedEvent(UUID.randomUUID(), checkedAt, id, transactionId, customerId,
@@ -132,7 +168,7 @@ public final class ComplianceResult {
         return facts.attestation().source();
     }
 
-    /** The caller who stated the facts: token azp for a service, sub for staff. */
+    /** The caller who stated the facts (token azp for a service, sub for staff), or who requested a computed screening. */
     public String getAttestedBy() {
         return facts.attestation().attestedBy();
     }
@@ -151,6 +187,11 @@ public final class ComplianceResult {
 
     public Instant getCheckedAt() {
         return checkedAt;
+    }
+
+    /** The list loads a computed screening was matched against; empty for caller-attested facts. */
+    public List<ListVersion> getListVersions() {
+        return listVersions;
     }
 
     public boolean isPassed() {

@@ -128,6 +128,31 @@ fintechbankx:
     service-callers: ${SERVICE_CALLERS:svc-pay-initiation-settlement}
 
 compliance:
+  # POST /api/v1/compliance/screen (caller-attested facts) is deprecated and
+  # served only while this is true; otherwise it answers 410 and names v2.
+  # Reading results (GET) does not depend on it.
+  v1-caller-facts:
+    enabled: ${COMPLIANCE_V1_CALLER_FACTS_ENABLED:false}
+  # A screening is refused (503 SCREENING_SOURCE_UNAVAILABLE) while a list is
+  # empty or any of its sources was loaded longer ago than this. Sanctions
+  # lists change daily; PEP registers monthly, with a few days' slack.
+  lists:
+    sanctions-max-age: ${COMPLIANCE_LIST_MAX_AGE_SANCTIONS:P1D}
+    pep-max-age: ${COMPLIANCE_LIST_MAX_AGE_PEP:P35D}
+  # The customer context (svc-cus-profile-kyc): name and KYC status for a
+  # computed screening. Short timeouts; the caller retries a 503.
+  customer:
+    base-url: ${CUSTOMER_SERVICE_URL:http://localhost:8082}
+    connect-timeout: ${CUSTOMER_SERVICE_CONNECT_TIMEOUT:PT2S}
+    read-timeout: ${CUSTOMER_SERVICE_READ_TIMEOUT:PT3S}
+  # This service's own client-credentials client, for calls to other contexts.
+  # The credential is bound from SVC_CLIENT_SECRET (Kubernetes Secret); it is
+  # never written in this file. Empty means no token can be obtained and every
+  # computed screening is refused as SCREENING_SOURCE_UNAVAILABLE.
+  identity:
+    token-uri: ${OIDC_TOKEN_URI:http://localhost:8180/realms/fintechbankx/protocol/openid-connect/token}
+    client-id: ${SVC_CLIENT_ID:svc-cmp-evidence}
+    client-secret: ${SVC_CLIENT_SECRET:}
   outbox:
     retention: P7D
     relay:

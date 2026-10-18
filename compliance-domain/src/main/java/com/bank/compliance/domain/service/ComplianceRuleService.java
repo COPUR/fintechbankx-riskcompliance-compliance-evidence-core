@@ -2,10 +2,11 @@ package com.bank.compliance.domain.service;
 
 import com.bank.compliance.domain.ComplianceDecision;
 import com.bank.compliance.domain.ComplianceResult;
+import com.bank.compliance.domain.ListVersion;
+import com.bank.compliance.domain.ScreeningFacts;
 import com.bank.compliance.domain.port.in.ComplianceScreeningCommand;
 
 import java.math.BigDecimal;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -15,7 +16,9 @@ import java.util.Optional;
  * PEP's transaction above the high-value threshold for its currency goes to
  * review, and so does a PEP's transaction in a currency with no threshold
  * (UNSUPPORTED_CURRENCY: an amount is never judged against another currency's
- * threshold); otherwise it passes.
+ * threshold); otherwise it passes. The rules judge facts; whether a caller
+ * stated them (v1) or compliance computed them (v2) is recorded on the
+ * result's attestation, not in the rules.
  */
 public class ComplianceRuleService {
 
@@ -35,66 +38,36 @@ public class ComplianceRuleService {
         this.pepHighValueThresholds = Objects.requireNonNull(pepHighValueThresholds, "pepHighValueThresholds are required");
     }
 
+    /** Screens caller-attested facts (v1). */
     public ComplianceResult screen(ComplianceScreeningCommand command) {
-        List<String> reasons = new ArrayList<>();
+        return screen(command.transactionId(), command.customerId(), command.facts(), List.of());
+    }
 
-        if (command.sanctionsHit()) {
-            reasons.add("SANCTIONS_HIT");
-            return ComplianceResult.create(
-                    command.transactionId(),
-                    command.customerId(),
-                    command.facts(),
-                    ComplianceDecision.FAIL,
-                    reasons,
-                    RULE_SET_VERSION
-            );
+    /**
+     * Screens resolved facts and records the list loads they were matched against.
+     *
+     * @param listVersions the list loads consulted for computed facts; empty for caller-attested facts
+     */
+    public ComplianceResult screen(String transactionId, String customerId, ScreeningFacts facts, List<ListVersion> listVersions) {
+        Objects.requireNonNull(facts, "facts are required");
+        if (facts.sanctionsHit()) {
+            return decide(transactionId, customerId, facts, listVersions, ComplianceDecision.FAIL, "SANCTIONS_HIT");
         }
-
-        if (!command.kycVerified()) {
-            reasons.add("KYC_NOT_VERIFIED");
-            return ComplianceResult.create(
-                    command.transactionId(),
-                    command.customerId(),
-                    command.facts(),
-                    ComplianceDecision.FAIL,
-                    reasons,
-                    RULE_SET_VERSION
-            );
+        if (!facts.kycVerified()) {
+            return decide(transactionId, customerId, facts, listVersions, ComplianceDecision.FAIL, "KYC_NOT_VERIFIED");
         }
-
-        Optional<BigDecimal> pepThreshold = pepHighValueThresholds.forCurrency(command.currency());
-        if (command.pep() && pepThreshold.isEmpty()) {
-            reasons.add("UNSUPPORTED_CURRENCY");
-            return ComplianceResult.create(
-                    command.transactionId(),
-                    command.customerId(),
-                    command.facts(),
-                    ComplianceDecision.REVIEW,
-                    reasons,
-                    RULE_SET_VERSION
-            );
+        Optional<BigDecimal> pepThreshold = pepHighValueThresholds.forCurrency(facts.currency());
+        if (facts.pep() && pepThreshold.isEmpty()) {
+            return decide(transactionId, customerId, facts, listVersions, ComplianceDecision.REVIEW, "UNSUPPORTED_CURRENCY");
         }
-
-        if (command.pep() && command.amount().compareTo(pepThreshold.orElseThrow()) > 0) {
-            reasons.add("PEP_HIGH_VALUE_REVIEW");
-            return ComplianceResult.create(
-                    command.transactionId(),
-                    command.customerId(),
-                    command.facts(),
-                    ComplianceDecision.REVIEW,
-                    reasons,
-                    RULE_SET_VERSION
-            );
+        if (facts.pep() && facts.amount().compareTo(pepThreshold.orElseThrow()) > 0) {
+            return decide(transactionId, customerId, facts, listVersions, ComplianceDecision.REVIEW, "PEP_HIGH_VALUE_REVIEW");
         }
+        return decide(transactionId, customerId, facts, listVersions, ComplianceDecision.PASS, "COMPLIANT");
+    }
 
-        reasons.add("COMPLIANT");
-        return ComplianceResult.create(
-                command.transactionId(),
-                command.customerId(),
-                command.facts(),
-                ComplianceDecision.PASS,
-                reasons,
-                RULE_SET_VERSION
-        );
+    private static ComplianceResult decide(String transactionId, String customerId, ScreeningFacts facts,
+                                           List<ListVersion> listVersions, ComplianceDecision decision, String reason) {
+        return ComplianceResult.create(transactionId, customerId, facts, decision, List.of(reason), RULE_SET_VERSION, listVersions);
     }
 }

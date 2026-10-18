@@ -65,6 +65,7 @@ class ClientCredentialsTokenProviderTest {
         assertThat(provider.bearerToken()).as("reused for 300 s minus a 30 s margin").isEqualTo("token-1");
         server.verify();
 
+        server.reset();
         server.expect(once(), requestTo(TOKEN_URI))
                 .andRespond(withSuccess("{\"access_token\":\"token-2\",\"expires_in\":300}", MediaType.APPLICATION_JSON));
         now.set(START.plus(Duration.ofSeconds(270)));

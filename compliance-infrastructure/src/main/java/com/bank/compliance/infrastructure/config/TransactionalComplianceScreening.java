@@ -3,6 +3,7 @@ package com.bank.compliance.infrastructure.config;
 import com.bank.compliance.domain.ComplianceResult;
 import com.bank.compliance.domain.port.in.ComplianceScreeningCommand;
 import com.bank.compliance.domain.port.in.ComplianceScreeningUseCase;
+import com.bank.compliance.domain.port.in.ComputedFactsScreeningCommand;
 import org.springframework.transaction.support.TransactionOperations;
 
 import java.util.Objects;
@@ -34,6 +35,16 @@ public class TransactionalComplianceScreening implements ComplianceScreeningUseC
     @Override
     public ComplianceResult screen(ComplianceScreeningCommand command) {
         return readWrite.execute(status -> delegate.screen(command));
+    }
+
+    /**
+     * The source lookups (customer context over HTTP, the list tables) run
+     * inside the same transaction as the insert; the HTTP call holds a
+     * connection for its short timeout, which the pool size allows for.
+     */
+    @Override
+    public ComplianceResult screenWithComputedFacts(ComputedFactsScreeningCommand command) {
+        return readWrite.execute(status -> delegate.screenWithComputedFacts(command));
     }
 
     @Override

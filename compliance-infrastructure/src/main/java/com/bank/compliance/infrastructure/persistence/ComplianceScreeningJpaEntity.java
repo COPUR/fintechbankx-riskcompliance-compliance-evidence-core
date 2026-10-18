@@ -10,6 +10,7 @@ import org.hibernate.type.SqlTypes;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Row of sc_cmp_evidence.compliance_screening. Screening results are evidence:
@@ -60,6 +61,11 @@ public class ComplianceScreeningJpaEntity {
     @Column(name = "reasons", nullable = false, updatable = false, columnDefinition = "jsonb")
     private List<String> reasons;
 
+    /** The list loads a computed screening was matched against: [{list, source, version, loadedAt}]; [] for caller-attested facts. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "list_versions", nullable = false, updatable = false, columnDefinition = "jsonb")
+    private List<Map<String, String>> listVersions;
+
     @Column(name = "checked_at", nullable = false, updatable = false)
     private Instant checkedAt;
 
@@ -69,7 +75,7 @@ public class ComplianceScreeningJpaEntity {
     ComplianceScreeningJpaEntity(String screeningId, String transactionId, String customerId,
                                  BigDecimal amount, String currency, boolean sanctionsHit, boolean kycVerified,
                                  boolean pep, String attestationSource, String attestedBy, String decision, List<String> reasons,
-                                 String ruleSetVersion, Instant checkedAt) {
+                                 List<Map<String, String>> listVersions, String ruleSetVersion, Instant checkedAt) {
         this.screeningId = screeningId;
         this.transactionId = transactionId;
         this.customerId = customerId;
@@ -83,6 +89,7 @@ public class ComplianceScreeningJpaEntity {
         this.ruleSetVersion = ruleSetVersion;
         this.decision = decision;
         this.reasons = reasons;
+        this.listVersions = listVersions;
         this.checkedAt = checkedAt;
     }
 
@@ -99,5 +106,6 @@ public class ComplianceScreeningJpaEntity {
     public String getRuleSetVersion() { return ruleSetVersion; }
     public String getDecision() { return decision; }
     public List<String> getReasons() { return reasons; }
+    public List<Map<String, String>> getListVersions() { return listVersions; }
     public Instant getCheckedAt() { return checkedAt; }
 }

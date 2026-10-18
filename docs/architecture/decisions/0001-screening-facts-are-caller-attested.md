@@ -1,6 +1,6 @@
 # 0001. Screening facts are caller-attested until compliance resolves them itself
 
-- Status: Proposed
+- Status: Proposed; partly superseded by [decision 0003](0003-compliance-computes-sanctions-pep-and-kyc.md) (2026-10-18): compliance now computes the sanctions, PEP and KYC facts on `POST /api/v2/compliance/screen` (`attestation` `COMPUTED`); the caller-attested v1 operation stays, deprecated, behind `COMPLIANCE_V1_CALLER_FACTS_ENABLED`. Points 1 to 3 below still hold for v1 rows and for the evidence rules.
 - Date: 2026-10-08
 - Owner: Risk and Compliance Decisioning Squad
 - Scope: `svc-cmp-evidence`, `POST /api/v1/compliance/screen`

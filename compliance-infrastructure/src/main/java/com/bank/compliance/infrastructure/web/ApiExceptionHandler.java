@@ -1,5 +1,7 @@
 package com.bank.compliance.infrastructure.web;
 
+import com.bank.compliance.domain.CustomerNotFoundException;
+import com.bank.compliance.domain.ScreeningSourceUnavailableException;
 import com.bank.compliance.domain.TransactionAlreadyScreenedException;
 import com.bank.compliance.domain.ScreeningAlreadyRecordedException;
 import org.slf4j.Logger;
@@ -37,6 +39,24 @@ public class ApiExceptionHandler {
     @ExceptionHandler(ScreeningAlreadyRecordedException.class)
     ResponseEntity<ErrorResponse> duplicate(ScreeningAlreadyRecordedException ex) {
         return error(HttpStatus.CONFLICT, "DUPLICATE_REQUEST", "This transaction is already being screened; retry");
+    }
+
+    /**
+     * A fact compliance must compute cannot be resolved right now (customer
+     * context down or refusing, a list empty or stale): nothing was recorded,
+     * the caller retries later. Never a PASS by default. The message names the
+     * source only.
+     */
+    @ExceptionHandler(ScreeningSourceUnavailableException.class)
+    ResponseEntity<ErrorResponse> sourceUnavailable(ScreeningSourceUnavailableException ex) {
+        log.warn("Screening refused, source unavailable: {}", ex.getMessage());
+        return error(HttpStatus.SERVICE_UNAVAILABLE, "SCREENING_SOURCE_UNAVAILABLE", ex.getMessage());
+    }
+
+    /** The customer context has no such customer: a definite answer, so a client error, not an outage. */
+    @ExceptionHandler(CustomerNotFoundException.class)
+    ResponseEntity<ErrorResponse> customerNotFound(CustomerNotFoundException ex) {
+        return error(HttpStatus.UNPROCESSABLE_ENTITY, "CUSTOMER_NOT_FOUND", ex.getMessage());
     }
 
     /**

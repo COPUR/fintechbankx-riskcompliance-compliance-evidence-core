@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Rehearses scripts/ops/load-screening-list.sh on a scratch PostgreSQL: applies
 # this service's Flyway migrations, loads the shared diacritics fixtures as a
-# sanctions source and checks that the SQL-side normalisation agrees with the
+# sanctions source and checks that the loader-side normalisation agrees with the
 # Java domain (NormalizedNameTest reads the same file), replaces a source
 # transactionally (a reload replaces only that source; other sources stay),
 # loads a PEP source, and checks every refusal: a credential in the conninfo
@@ -85,7 +85,7 @@ if ! diff -u "$work/expected.txt" "$work/actual.txt"; then
   echo "FAIL the loader's normalisation disagrees with the fixtures the Java domain is tested against" >&2
   exit 1
 fi
-echo "ok   SQL-side normalisation agrees with the shared fixtures"
+echo "ok   loader-side normalisation agrees with the shared fixtures"
 
 echo "--- a second source does not touch the first"
 printf 'display_name\nTest OFAC Dummy\n"Test Second, Dummy"\n' > "$work/ofac.csv"

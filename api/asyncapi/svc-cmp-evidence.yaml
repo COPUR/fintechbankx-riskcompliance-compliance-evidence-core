@@ -85,8 +85,8 @@ components:
     ComplianceScreenedData:
       type: object
       description: 'Payload of Compliance.ComplianceScreening.Screened.v1. Ids and the decision only; reason codes are not published.
-        The inputs to screening (sanctions, PEP and KYC flags, amount) are not published; entitled readers get
-        them through the compliance API.'
+        The inputs to screening (sanctions, PEP and KYC flags, amount), the attestation and the list loads a
+        computed screening was matched against are not published; entitled readers get them through the compliance API.'
       properties:
         screeningId:
           type: string
