@@ -32,21 +32,20 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 
 /**
  * Anti-corruption adapter for the customer context's published API
- * (customer-context.yaml): the name comes from GET /api/v1/customers/{id},
- * the KYC status from GET /api/v1/customers/{id}/kyc-status (CustomerResponse
- * carries no KYC field). Both calls carry the service's own client-credentials
- * token and the request's interaction id. Anything but a definite answer is a
- * source outage: the screening never guesses a fact.
+ * (customer-context.yaml): GET /api/v1/customers/{id} answers the name and,
+ * for a listed service caller (SERVICE_CALLERS_PROFILE, aud
+ * svc-cus-profile-kyc), the required kycStatus. The call carries the
+ * service's own client-credentials token and the request's interaction id.
+ * Anything but a definite answer is a source outage: the screening never
+ * guesses a fact.
  */
 class CustomerProfileHttpAdapterTest {
 
     private static final String BASE = "http://customer.test";
     private static final String PROFILE = """
             {"customerId":"C-1","firstName":"Test","lastName":"Clean Pérson","email":null,"creditLimit":1000.0,
-             "usedCredit":0.0,"availableCredit":1000.0,"status":"ACTIVE","createdAt":"2026-10-01T00:00:00Z","lastModifiedAt":"2026-10-01T00:00:00Z"}
-            """;
-    private static final String KYC_VERIFIED = """
-            {"customerId":"C-1","kycVerified":true,"kycStatus":"VERIFIED","kycSource":"STAFF","verifiedAt":"2026-10-02T00:00:00Z"}
+             "usedCredit":0.0,"availableCredit":1000.0,"status":"ACTIVE","kycStatus":"VERIFIED",
+             "createdAt":"2026-10-01T00:00:00Z","lastModifiedAt":"2026-10-01T00:00:00Z"}
             """;
 
     private MockRestServiceServer server;
@@ -71,10 +70,6 @@ class CustomerProfileHttpAdapterTest {
                 .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer stub-service-token"))
                 .andExpect(header(CorrelationIdFilter.HEADER, "it-interaction-9"))
                 .andRespond(withSuccess(PROFILE, MediaType.APPLICATION_JSON));
-        server.expect(once(), requestTo(BASE + "/api/v1/customers/C-1/kyc-status")).andExpect(method(HttpMethod.GET))
-                .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer stub-service-token"))
-                .andExpect(header(CorrelationIdFilter.HEADER, "it-interaction-9"))
-                .andRespond(withSuccess(KYC_VERIFIED, MediaType.APPLICATION_JSON));
 
         Optional<CustomerProfile> profile = adapter.findCustomer("C-1");
 
@@ -87,9 +82,7 @@ class CustomerProfileHttpAdapterTest {
     void withoutARequestContextAnInteractionIdIsStillSent() {
         server.expect(requestTo(BASE + "/api/v1/customers/C-1"))
                 .andExpect(header(CorrelationIdFilter.HEADER, org.hamcrest.Matchers.matchesPattern("[0-9a-f-]{36}")))
-                .andRespond(withSuccess(PROFILE, MediaType.APPLICATION_JSON));
-        server.expect(requestTo(BASE + "/api/v1/customers/C-1/kyc-status"))
-                .andRespond(withSuccess(KYC_VERIFIED.replace("VERIFIED", "PENDING").replace("true", "false"), MediaType.APPLICATION_JSON));
+                .andRespond(withSuccess(PROFILE.replace("VERIFIED", "PENDING"), MediaType.APPLICATION_JSON));
 
         assertThat(adapter.findCustomer("C-1").orElseThrow().kycStatus()).isEqualTo(KycStatus.PENDING);
         server.verify();
@@ -105,14 +98,6 @@ class CustomerProfileHttpAdapterTest {
     }
 
     @Test
-    void aMissingKycStatusForAnExistingProfileIsEmptyToo() {
-        server.expect(requestTo(BASE + "/api/v1/customers/C-1")).andRespond(withSuccess(PROFILE, MediaType.APPLICATION_JSON));
-        server.expect(requestTo(BASE + "/api/v1/customers/C-1/kyc-status")).andRespond(withResourceNotFound());
-
-        assertThat(adapter.findCustomer("C-1")).isEmpty();
-    }
-
-    @Test
     void aServerErrorIsASourceOutageWithoutTheCustomerId() {
         server.expect(requestTo(BASE + "/api/v1/customers/C-1")).andRespond(withServerError());
 
@@ -124,7 +109,7 @@ class CustomerProfileHttpAdapterTest {
 
     @Test
     void aRefusedTokenIsASourceOutageNotANotFound() {
-        // 401/403: this service's client is not entitled yet (Keycloak scopes, allow-list); never read as "no customer".
+        // 401/403: this service's client is not entitled yet (aud svc-cus-profile-kyc, SERVICE_CALLERS_PROFILE); never read as "no customer".
         server.expect(requestTo(BASE + "/api/v1/customers/C-1")).andRespond(withStatus(HttpStatus.FORBIDDEN));
 
         assertThatThrownBy(() -> adapter.findCustomer("C-1"))
@@ -143,11 +128,16 @@ class CustomerProfileHttpAdapterTest {
     }
 
     @Test
-    void anUnknownKycStatusValueIsContractDriftNotAFact() {
-        server.expect(requestTo(BASE + "/api/v1/customers/C-1")).andRespond(withSuccess(PROFILE, MediaType.APPLICATION_JSON));
-        server.expect(requestTo(BASE + "/api/v1/customers/C-1/kyc-status"))
-                .andRespond(withSuccess(KYC_VERIFIED.replace("VERIFIED", "ESCALATED"), MediaType.APPLICATION_JSON));
+    void anUnknownOrMissingKycStatusIsContractDriftNotAFact() {
+        server.expect(requestTo(BASE + "/api/v1/customers/C-1"))
+                .andRespond(withSuccess(PROFILE.replace("VERIFIED", "ESCALATED"), MediaType.APPLICATION_JSON));
+        assertThatThrownBy(() -> adapter.findCustomer("C-1"))
+                .isInstanceOf(ScreeningSourceUnavailableException.class)
+                .hasMessage("The customer profile service answered with an unknown KYC status");
 
+        // A profile without kycStatus (an older customer release, or a caller the customer context does not show it to).
+        server.expect(requestTo(BASE + "/api/v1/customers/C-1"))
+                .andRespond(withSuccess(PROFILE.replace("\"kycStatus\":\"VERIFIED\",", ""), MediaType.APPLICATION_JSON));
         assertThatThrownBy(() -> adapter.findCustomer("C-1"))
                 .isInstanceOf(ScreeningSourceUnavailableException.class)
                 .hasMessage("The customer profile service answered with an unknown KYC status");
@@ -157,7 +147,6 @@ class CustomerProfileHttpAdapterTest {
     void aProfileWithoutANameCannotBeScreened() {
         server.expect(requestTo(BASE + "/api/v1/customers/C-1"))
                 .andRespond(withSuccess(PROFILE.replace("\"Clean Pérson\"", "\" \""), MediaType.APPLICATION_JSON));
-        server.expect(requestTo(BASE + "/api/v1/customers/C-1/kyc-status")).andRespond(withSuccess(KYC_VERIFIED, MediaType.APPLICATION_JSON));
 
         assertThatThrownBy(() -> adapter.findCustomer("C-1"))
                 .isInstanceOf(ScreeningSourceUnavailableException.class)
