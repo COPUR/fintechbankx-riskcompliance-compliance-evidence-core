@@ -32,20 +32,19 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 
 /**
  * Anti-corruption adapter for the customer context's published API
- * (customer-context.yaml): GET /api/v1/customers/{id} answers the name and,
- * for a listed service caller (SERVICE_CALLERS_PROFILE, aud
- * svc-cus-profile-kyc), the required kycStatus. The call carries the
- * service's own client-credentials token and the request's interaction id.
- * Anything but a definite answer is a source outage: the screening never
- * guesses a fact.
+ * (customer-context.yaml): GET /api/v1/customers/{id}/screening-profile
+ * answers exactly what a screening needs (customerId, firstName, lastName,
+ * kycStatus) to a listed service caller (SERVICE_CALLERS_SCREENING, aud
+ * svc-cus-profile-kyc); compliance never reads the full profile. The call
+ * carries the service's own client-credentials token and the request's
+ * interaction id. Anything but a definite answer is a source outage: the
+ * screening never guesses a fact.
  */
 class CustomerProfileHttpAdapterTest {
 
     private static final String BASE = "http://customer.test";
     private static final String PROFILE = """
-            {"customerId":"C-1","firstName":"Test","lastName":"Clean Pérson","email":null,"creditLimit":1000.0,
-             "usedCredit":0.0,"availableCredit":1000.0,"status":"ACTIVE","kycStatus":"VERIFIED",
-             "createdAt":"2026-10-01T00:00:00Z","lastModifiedAt":"2026-10-01T00:00:00Z"}
+            {"customerId":"C-1","firstName":"Test","lastName":"Clean Pérson","kycStatus":"VERIFIED"}
             """;
 
     private MockRestServiceServer server;
@@ -66,7 +65,7 @@ class CustomerProfileHttpAdapterTest {
     @Test
     void readsTheNameAndTheKycStatusWithTheServiceTokenAndTheInteractionId() {
         MDC.put(CorrelationIdFilter.MDC_KEY, "it-interaction-9");
-        server.expect(once(), requestTo(BASE + "/api/v1/customers/C-1")).andExpect(method(HttpMethod.GET))
+        server.expect(once(), requestTo(BASE + "/api/v1/customers/C-1/screening-profile")).andExpect(method(HttpMethod.GET))
                 .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer stub-service-token"))
                 .andExpect(header(CorrelationIdFilter.HEADER, "it-interaction-9"))
                 .andRespond(withSuccess(PROFILE, MediaType.APPLICATION_JSON));
@@ -80,7 +79,7 @@ class CustomerProfileHttpAdapterTest {
 
     @Test
     void withoutARequestContextAnInteractionIdIsStillSent() {
-        server.expect(requestTo(BASE + "/api/v1/customers/C-1"))
+        server.expect(requestTo(BASE + "/api/v1/customers/C-1/screening-profile"))
                 .andExpect(header(CorrelationIdFilter.HEADER, org.hamcrest.Matchers.matchesPattern("[0-9a-f-]{36}")))
                 .andRespond(withSuccess(PROFILE.replace("VERIFIED", "PENDING"), MediaType.APPLICATION_JSON));
 
@@ -90,7 +89,7 @@ class CustomerProfileHttpAdapterTest {
 
     @Test
     void aCustomerThatDoesNotExistIsEmptyNotAnOutage() {
-        server.expect(requestTo(BASE + "/api/v1/customers/C-404")).andRespond(withResourceNotFound()
+        server.expect(requestTo(BASE + "/api/v1/customers/C-404/screening-profile")).andRespond(withResourceNotFound()
                 .contentType(MediaType.APPLICATION_JSON).body("{\"code\":\"CUSTOMER_NOT_FOUND\",\"message\":\"Customer not found\"}"));
 
         assertThat(adapter.findCustomer("C-404")).isEmpty();
@@ -99,7 +98,7 @@ class CustomerProfileHttpAdapterTest {
 
     @Test
     void aServerErrorIsASourceOutageWithoutTheCustomerId() {
-        server.expect(requestTo(BASE + "/api/v1/customers/C-1")).andRespond(withServerError());
+        server.expect(requestTo(BASE + "/api/v1/customers/C-1/screening-profile")).andRespond(withServerError());
 
         assertThatThrownBy(() -> adapter.findCustomer("C-1"))
                 .isInstanceOf(ScreeningSourceUnavailableException.class)
@@ -110,7 +109,7 @@ class CustomerProfileHttpAdapterTest {
     @Test
     void aRefusedTokenIsASourceOutageNotANotFound() {
         // 401/403: this service's client is not entitled yet (aud svc-cus-profile-kyc, SERVICE_CALLERS_PROFILE); never read as "no customer".
-        server.expect(requestTo(BASE + "/api/v1/customers/C-1")).andRespond(withStatus(HttpStatus.FORBIDDEN));
+        server.expect(requestTo(BASE + "/api/v1/customers/C-1/screening-profile")).andRespond(withStatus(HttpStatus.FORBIDDEN));
 
         assertThatThrownBy(() -> adapter.findCustomer("C-1"))
                 .isInstanceOf(ScreeningSourceUnavailableException.class)
@@ -119,7 +118,7 @@ class CustomerProfileHttpAdapterTest {
 
     @Test
     void anUnreachableServiceIsASourceOutage() {
-        server.expect(requestTo(BASE + "/api/v1/customers/C-1"))
+        server.expect(requestTo(BASE + "/api/v1/customers/C-1/screening-profile"))
                 .andRespond(request -> { throw new ResourceAccessException("connect timed out", new IOException("connect timed out")); });
 
         assertThatThrownBy(() -> adapter.findCustomer("C-1"))
@@ -129,15 +128,15 @@ class CustomerProfileHttpAdapterTest {
 
     @Test
     void anUnknownOrMissingKycStatusIsContractDriftNotAFact() {
-        server.expect(requestTo(BASE + "/api/v1/customers/C-1"))
+        server.expect(requestTo(BASE + "/api/v1/customers/C-1/screening-profile"))
                 .andRespond(withSuccess(PROFILE.replace("VERIFIED", "ESCALATED"), MediaType.APPLICATION_JSON));
         assertThatThrownBy(() -> adapter.findCustomer("C-1"))
                 .isInstanceOf(ScreeningSourceUnavailableException.class)
                 .hasMessage("The customer profile service answered with an unknown KYC status");
 
-        // A profile without kycStatus (an older customer release, or a caller the customer context does not show it to).
+        // A profile without kycStatus (an older customer release).
         server.reset();
-        server.expect(requestTo(BASE + "/api/v1/customers/C-1"))
+        server.expect(requestTo(BASE + "/api/v1/customers/C-1/screening-profile"))
                 .andRespond(withSuccess(PROFILE.replace("\"kycStatus\":\"VERIFIED\",", ""), MediaType.APPLICATION_JSON));
         assertThatThrownBy(() -> adapter.findCustomer("C-1"))
                 .isInstanceOf(ScreeningSourceUnavailableException.class)
@@ -146,7 +145,7 @@ class CustomerProfileHttpAdapterTest {
 
     @Test
     void aProfileWithoutANameCannotBeScreened() {
-        server.expect(requestTo(BASE + "/api/v1/customers/C-1"))
+        server.expect(requestTo(BASE + "/api/v1/customers/C-1/screening-profile"))
                 .andRespond(withSuccess(PROFILE.replace("\"Clean Pérson\"", "\" \""), MediaType.APPLICATION_JSON));
 
         assertThatThrownBy(() -> adapter.findCustomer("C-1"))

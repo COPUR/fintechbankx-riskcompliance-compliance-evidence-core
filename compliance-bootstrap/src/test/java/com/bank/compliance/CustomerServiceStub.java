@@ -16,9 +16,10 @@ import java.util.concurrent.atomic.AtomicReference;
  * Stand-in for svc-cus-profile-kyc and the realm's token endpoint on a random
  * local port (JDK HttpServer, no extra dependency), so the integration tests
  * drive the real HTTP adapter and token provider end to end. Serves
- * GET /api/v1/customers/{id} (CustomerResponse shape with the required
- * kycStatus the customer context shows to listed service callers) for the
- * customers registered here, 404 CUSTOMER_NOT_FOUND otherwise, and
+ * GET /api/v1/customers/{id}/screening-profile (customerId, firstName,
+ * lastName, kycStatus: the only fields the customer context shows to a
+ * listed screening caller) for the customers registered here, 404
+ * CUSTOMER_NOT_FOUND otherwise, 404 for any other customer path, and
  * POST /token for the client-credentials grant.
  */
 final class CustomerServiceStub implements AutoCloseable {
@@ -96,16 +97,20 @@ final class CustomerServiceStub implements AutoCloseable {
             respond(exchange, forced, "{\"code\":\"INTERNAL_ERROR\",\"message\":\"stub failure\"}");
             return;
         }
-        String id = exchange.getRequestURI().getPath().substring("/api/v1/customers/".length());
+        String path = exchange.getRequestURI().getPath().substring("/api/v1/customers/".length());
+        if (!path.endsWith("/screening-profile")) {
+            // The full profile is not for compliance; only the screening profile exists for this caller.
+            respond(exchange, 404, "{\"code\":\"NOT_FOUND\",\"message\":\"No such resource\"}");
+            return;
+        }
+        String id = path.substring(0, path.length() - "/screening-profile".length());
         StubCustomer found = customers.get(id);
         if (found == null) {
             respond(exchange, 404, "{\"code\":\"CUSTOMER_NOT_FOUND\",\"message\":\"Customer not found\",\"interactionId\":\"x\",\"timestamp\":\"2026-10-18T00:00:00Z\"}");
             return;
         }
         respond(exchange, 200, """
-            {"customerId":"%s","firstName":"%s","lastName":"%s","email":null,"phoneNumber":null,"creditLimit":1000.0,
-             "usedCredit":0.0,"availableCredit":1000.0,"status":"ACTIVE","kycStatus":"%s","creditScore":null,"monthlyIncome":null,
-             "createdAt":"2026-10-01T00:00:00Z","lastModifiedAt":"2026-10-01T00:00:00Z"}
+            {"customerId":"%s","firstName":"%s","lastName":"%s","kycStatus":"%s"}
             """.formatted(id, found.firstName(), found.lastName(), found.kycStatus()));
     }
 
