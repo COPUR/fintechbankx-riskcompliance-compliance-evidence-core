@@ -14,6 +14,9 @@ args="$args --set externalSecret.migrationSecretName=ci/compliance-evidence-serv
 args="$args --set config.DB_URL=jdbc:postgresql://ci:5432/db?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem"
 args="$args --set config.KAFKA_BOOTSTRAP_SERVERS=ci:9098"
 args="$args --set config.OIDC_ISSUER_URI=https://ci/realms/fintechbankx --set config.OIDC_JWK_SET_URI=https://ci/certs"
+# Computed screening facts (decision 0003): the customer context in the mesh and the realm token endpoint.
+args="$args --set config.CUSTOMER_SERVICE_URL=http://customer-profile-kyc.customer.svc.cluster.local:8080"
+args="$args --set config.OIDC_TOKEN_URI=https://ci/realms/fintechbankx/protocol/openid-connect/token"
 # Empty required settings must fail the render, not produce pods that cannot start.
 if helm template ci "$chart" --set image.repository=ci/x --set image.tag=x --set externalSecret.remoteSecretName=ci/db-app > /dev/null 2>&1; then
   echo "chart rendered without required runtime config"; exit 1
@@ -407,6 +410,80 @@ for name, e in env.items():
         sys.exit(name + " must come only from valueFrom.secretKeyRef: %r" % e)
 print("KAFKA_TLS_CERT/KEY/CA from valueFrom.secretKeyRef only")
 ' < <(helm template ci "$chart" $args $strimzi)
+# Computed screening facts (decision 0003). The chart renders CUSTOMER_SERVICE_URL, OIDC_TOKEN_URI, SVC_CLIENT_ID,
+# COMPLIANCE_V1_CALLER_FACTS_ENABLED and the two list ages from config.*, every one required
+# (compliance.requiredConfig: a dropped key fails the render), and SVC_CLIENT_SECRET only from
+# valueFrom.secretKeyRef on identity.clientSecret (an existing Secret, synced by platform; the chart ships no
+# ExternalSecret or SecretStore for it). The values are checked: the flag is "true" or "false", the ages are
+# ISO-8601 durations, the token endpoint is https (the credential travels in the request body), the customer URL
+# is an absolute http(s) URL. A property spelling of these settings, or the credential, in config.* is refused.
+for key in CUSTOMER_SERVICE_URL OIDC_TOKEN_URI SVC_CLIENT_ID COMPLIANCE_V1_CALLER_FACTS_ENABLED \
+    COMPLIANCE_LIST_MAX_AGE_SANCTIONS COMPLIANCE_LIST_MAX_AGE_PEP; do
+  reject_render "config.$key is required" --set "config.$key=null"
+  reject_render "config.$key is required" --set-string "config.$key="
+done
+reject_render 'config.SVC_CLIENT_SECRET must not be set' --set-string config.SVC_CLIENT_SECRET=x
+reject_render 'config.COMPLIANCE_IDENTITY_CLIENT_SECRET must not be set' --set-string config.COMPLIANCE_IDENTITY_CLIENT_SECRET=x
+reject_render 'config.compliance.identity.client-secret must not be set' --set-string 'config.compliance\.identity\.client-secret=x'
+reject_render 'config.COMPLIANCE_IDENTITY_TOKEN_URI must not be set' --set-string config.COMPLIANCE_IDENTITY_TOKEN_URI=https://ci/token
+reject_render 'config.COMPLIANCE_CUSTOMER_BASE_URL must not be set' --set-string config.COMPLIANCE_CUSTOMER_BASE_URL=http://ci
+reject_render 'config.COMPLIANCE_LISTS_SANCTIONS_MAX_AGE must not be set' --set-string config.COMPLIANCE_LISTS_SANCTIONS_MAX_AGE=P1D
+reject_render 'config.compliance.lists.pep-max-age must not be set' --set-string 'config.compliance\.lists\.pep-max-age=P35D'
+for bad in yes 1 True FALSE "" ; do
+  [ -n "$bad" ] || continue
+  reject_render 'config.COMPLIANCE_V1_CALLER_FACTS_ENABLED must be "true" or "false"' --set-string "config.COMPLIANCE_V1_CALLER_FACTS_ENABLED=$bad"
+done
+render_ok --set-string config.COMPLIANCE_V1_CALLER_FACTS_ENABLED=true
+for key in COMPLIANCE_LIST_MAX_AGE_SANCTIONS COMPLIANCE_LIST_MAX_AGE_PEP; do
+  for bad in 1d 24h P PT P1Y P-1D 86400; do
+    reject_render "config.$key must be an ISO-8601 duration" --set-string "config.$key=$bad"
+  done
+  render_ok --set-string "config.$key=PT12H"
+  render_ok --set-string "config.$key=P35D"
+done
+reject_render 'config.OIDC_TOKEN_URI must be an https:// URL' --set-string config.OIDC_TOKEN_URI=http://ci/realms/fintechbankx/protocol/openid-connect/token
+reject_render 'config.OIDC_TOKEN_URI must be an https:// URL' --set-string config.OIDC_TOKEN_URI=ci/token
+reject_render 'config.CUSTOMER_SERVICE_URL must be an absolute http:// or https:// URL' --set-string config.CUSTOMER_SERVICE_URL=customer:8080
+reject_render 'config.CUSTOMER_SERVICE_URL must be an absolute http:// or https:// URL' --set-string 'config.CUSTOMER_SERVICE_URL=http://customer:8080 x'
+render_ok --set-string config.CUSTOMER_SERVICE_URL=https://customer.example.internal
+reject_render 'identity.clientSecret.secretName is required' --set-string identity.clientSecret.secretName=
+reject_render 'identity.clientSecret.key is required' --set-string identity.clientSecret.key=
+reject_render 'identity.clientSecret.secretName must be a DNS-1123 name' --set-string 'identity.clientSecret.secretName=Svc Client'
+reject_render 'identity.clientSecret.secretName must be a DNS-1123 name' --set-string identity.clientSecret.secretName=x$'\n'"                  injected: true"
+reject_render 'identity.clientSecret.key must be a Secret key' --set-string 'identity.clientSecret.key=client secret'
+python3 -c '
+import sys, yaml
+docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
+app = [d for d in docs if d["kind"] == "Deployment"][0]["spec"]["template"]["spec"]["containers"][0]
+env = {e["name"]: e for e in app["env"]}
+secret = env.get("SVC_CLIENT_SECRET")
+if secret is None:
+    sys.exit("the app pods lack SVC_CLIENT_SECRET")
+if set(secret) != {"name", "valueFrom"} or set(secret["valueFrom"]) != {"secretKeyRef"}:
+    sys.exit("SVC_CLIENT_SECRET must come only from valueFrom.secretKeyRef: %r" % secret)
+ref = secret["valueFrom"]["secretKeyRef"]
+if ref != {"name": "svc-client-ci", "key": "credential-ci"}:
+    sys.exit("SVC_CLIENT_SECRET must read identity.clientSecret.secretName/key: %r" % ref)
+if ref.get("optional"):
+    sys.exit("SVC_CLIENT_SECRET must not be optional: a pod without the credential must not start")
+configmaps = [d for d in docs if d["kind"] == "ConfigMap"]
+for cm in configmaps:
+    for key in cm.get("data") or {}:
+        if "SECRET" in key.upper() and key != "OIDC_JWK_SET_URI":
+            sys.exit("ConfigMap %s carries a secret-looking key %s" % (cm["metadata"]["name"], key))
+config = [d for d in docs if d["kind"] == "ConfigMap" and d["metadata"]["name"] == "compliance-evidence-service"][0]["data"]
+for key, want in {"SVC_CLIENT_ID": "svc-cmp-evidence", "COMPLIANCE_V1_CALLER_FACTS_ENABLED": "false",
+                  "COMPLIANCE_LIST_MAX_AGE_SANCTIONS": "P1D", "COMPLIANCE_LIST_MAX_AGE_PEP": "P35D"}.items():
+    if config.get(key) != want:
+        sys.exit("ConfigMap %s is %r, expected %r by default" % (key, config.get(key), want))
+for key in ("CUSTOMER_SERVICE_URL", "OIDC_TOKEN_URI"):
+    if not config.get(key):
+        sys.exit("ConfigMap lacks " + key)
+job = [d for d in docs if d["kind"] == "Job"][0]["spec"]["template"]["spec"]["containers"][0]
+if any(e["name"] == "SVC_CLIENT_SECRET" for e in job.get("env") or []):
+    sys.exit("the migration Job must not mount SVC_CLIENT_SECRET: it only migrates")
+print("SVC_CLIENT_SECRET from valueFrom.secretKeyRef only (identity.clientSecret), screening config rendered")
+' < <(helm template ci "$chart" $args --set-string identity.clientSecret.secretName=svc-client-ci --set-string identity.clientSecret.key=credential-ci)
 # DocumentDB names (the service has none; the guard keeps them out of the environment).
 mongodb='is not allowed: a spring.data.mongodb.\* property'
 reject_render_re "config.SPRING_DATA_MONGODB_URI $mongodb" --set-string 'config.SPRING_DATA_MONGODB_URI=mongodb://docdb.example.internal:27017/db?tls=false'

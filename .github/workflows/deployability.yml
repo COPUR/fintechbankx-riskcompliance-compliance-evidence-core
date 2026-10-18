@@ -78,6 +78,8 @@ jobs:
           args="$args --set config.DB_URL=jdbc:postgresql://ci:5432/db?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem"
           args="$args --set config.KAFKA_BOOTSTRAP_SERVERS=ci:9098"
           args="$args --set config.OIDC_ISSUER_URI=https://ci/realms/fintechbankx --set config.OIDC_JWK_SET_URI=https://ci/certs"
+          args="$args --set config.CUSTOMER_SERVICE_URL=http://customer-profile-kyc.customer.svc.cluster.local:8080"
+          args="$args --set config.OIDC_TOKEN_URI=https://ci/realms/fintechbankx/protocol/openid-connect/token"
           # Schemas pinned to commits: Kubernetes 1.30 (strict) and the ExternalSecret CRD.
           k8s='https://raw.githubusercontent.com/yannh/kubernetes-json-schema/39a87cd29966bc0b3434e8cfbc2061782c8cb69a/{{.NormalizedKubernetesVersion}}-standalone{{.StrictSuffix}}/{{.ResourceKind}}{{.KindSuffix}}.json'
           crds='https://raw.githubusercontent.com/datreeio/CRDs-catalog/63669a570e231d4f1f8396d229a1de512bcf0a34/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
